@@ -1,0 +1,24 @@
+\section*{1.1. Per-Trial Analysis}
+
+\subsection*{1.1.A. Analytic Strategy}
+
+To identify analytes that respond to treatment, we will fit trial-specific regression models for each analyte (i.e., each protein, metabolite, or CpG site). For trials with biospecimens available from baseline and one follow-up, we will fit linear regressions of change in the biomarker between treatment, adjusted for the baseline level of the biomarker and other pre-treatment variables:
+
+\begin{equation}
+(Z_{iFU} - Z_{iBL}) = \beta_0 + \beta_1 R x_i + \beta_2 Z_{iBL} + \gamma X_i + \epsilon_i
+\tag{EQ1.1}
+\end{equation}
+
+Where $Z_i$ is individual $i$'s measurement of the analyte and the subscripts FU and BL correspond to follow-up and baseline, respectively; $\beta_0$ is the model intercept; $\beta_1$ is the treatment effect; $R x_i$ is the randomization condition (0 for the control group, 1 for the treatment group); $\beta_2$ is the coefficient for baseline adjustment, controlling for individual differences in pre-treatment analyte levels; $X_i$ is a matrix of covariates including participant demographics at baseline and trial design features such as study site and enrollment strata with corresponding coefficient vector $\gamma$; and $\epsilon_i$ is the error term. Model EQ1.1 will be fit separately for each analyte. The treatment effect is $\beta_1$.
+
+For trials with biospecimens available at baseline and two or more follow-up timepoints, we will fit linear mixed effects models to account for the longitudinal structure of the data. This approach, standard in clinical trial analysis and which we used previously in our work with the CALERIE trial, utilizes repeated measurements of individuals to model random variation between participants to better isolate the common effect of treatment. The model takes the form:
+
+\begin{equation}
+(Z_{iFU_t} - Z_{iBL}) =
+(\alpha_0 + u_{0i}) + \alpha_1 Time_t + \alpha_2 R x_i + \alpha_3 (R x_i \times Time_t) + \gamma X_{i0} + \epsilon_{it}
+\tag{EQ1.2}
+\end{equation}
+
+Where $Z_{iFU_t}$ is the measurement of the analyte for individual $i$ at time follow-up time $t$; $\alpha_0$ is the sample-wide mean and $u_{0i}$ is the random intercept capturing individual differences from the sample-wide mean; $Time_t$ is follow-up time (0 at the first follow-up time, 1 at the second follow-up time); $\alpha_1$ is the biomarker’s slope with follow-up time; $R x_i$ is the randomization condition; the product term $R x_i \times Time_t$ is the interaction between treatment and follow-up (difference in change over follow-up time between treatment and control groups); $X_{i0}$ is a baseline covariate matrix with $\gamma$ the corresponding vector of regression coefficients; and $\epsilon_{it}$ is the error term. The treatment effect is $\alpha_2$ at the first follow-up and $\alpha_2 + \alpha_3$ at the second follow-up.
+
+We will also produce results from models stratified by sex.

@@ -1,0 +1,232 @@
+# Helper function for NZV detection
+.is_near_zero_variance <- function(x) {
+  if (!is.numeric(x)) return(FALSE)
+  if (all(is.na(x))) return(FALSE)
+  var(x, na.rm = TRUE) < 1e-8
+}
+
+
+.validate_omics_type <- function(omics_type){
+  
+  acceptable_types <- c("DNAm", "Proteomics", "Metabolomics")
+  
+  if (!omics_type %in% acceptable_types) {
+    stop(
+      "Invalid omics_type '", omics_type, "'. ",
+      "Must be one of: ", paste(acceptable_types, collapse = ", ")
+    )
+  }
+}
+
+
+.validate_pheno <- function(pheno, additional_covariates = NULL) {
+  
+  # Step 1: Input validation and conversion
+  if (is.matrix(pheno)) {
+    pheno <- as.data.frame(pheno)
+  } else if (!is.data.frame(pheno)) {
+    stop("pheno must be a data.frame or matrix")
+  }
+  
+  if (!is.null(additional_covariates) && !is.character(additional_covariates)) {
+    stop("additional_covariates must be NULL or a character vector")
+  }
+  
+  # Step 2: Required columns check
+  required_cols <- c("SAMPLE_ID", "FU", "SUBJECT_ID", "FEMALE", "CONTROL_STATUS")
+  missing_cols <- setdiff(required_cols, names(pheno))
+  if (length(missing_cols) > 0) {
+    stop("Missing required columns: ", paste(missing_cols, collapse = ", "))
+  }
+  
+  # Step 3: Column-specific validation
+  if (any(duplicated(pheno$SAMPLE_ID))) {
+    stop("SAMPLE_ID contains duplicate values")
+  }
+  
+  if (!all(pheno$FU %in% 0:3)) {
+    stop("FU must contain only values 0, 1, 2, or 3")
+  }
+  
+  if (!any(pheno$FU == 0)) {
+    stop("pheno must contain at least one baseline sample (FU == 0)")
+  }
+  
+  if (!any(pheno$FU == 1)) {
+    stop("pheno must contain at least one follow-up sample (FU >= 1)")
+  }
+  
+  if (!all(pheno$FEMALE %in% 0:1)) {
+    stop("FEMALE must contain only values 0 or 1")
+  }
+  
+  if (!all(pheno$CONTROL_STATUS %in% 0:1)) {
+    stop("CONTROL_STATUS must contain only values 0 or 1")
+  }
+  
+  if (!any(pheno$CONTROL_STATUS == 0) || !any(pheno$CONTROL_STATUS == 1)) {
+    stop("pheno must contain both control (CONTROL_STATUS == 0) and treatment (CONTROL_STATUS == 1)")
+  }
+  
+  # Check SUBJECT_ID/FU pair uniqueness
+  subject_fu_pairs <- paste(pheno$SUBJECT_ID, pheno$FU, sep = "_")
+  if (any(duplicated(subject_fu_pairs))) {
+    # Keep only first occurrence of each SUBJECT_ID/FU pair
+    warning("Found duplicate SUBJECT_ID/FU pairs. Keeping first occurrence, discarding replicates.")
+    pheno <- pheno[!duplicated(subject_fu_pairs), ]
+  }
+  
+  # Step 4: Additional covariates validation
+  if (!is.null(additional_covariates)) {
+    # Check all covariates exist in pheno
+    missing_addl <- setdiff(additional_covariates, names(pheno))
+    if (length(missing_addl) > 0) {
+      stop("Additional covariates not found in pheno: ", paste(missing_addl, collapse = ", "))
+    }
+  }
+  
+  # Validate each covariate (or skip if NULL)
+  for (covar in if (is.null(additional_covariates)) character(0) else additional_covariates) {
+    col_data <- pheno[[covar]]
+    
+    # Check type
+    if (!is.numeric(col_data) && !is.factor(col_data) && !is.logical(col_data)) {
+      stop("Additional covariate '", covar, "' must be numeric, factor, or logical")
+    }
+    
+    # Check for NAs
+    if (any(is.na(col_data))) {
+      warning("Additional covariate '", covar, "' contains NA values. Analysis sample will be reduced.")
+    }
+  }
+  
+  # Step 5: Gender composition detection
+  n_male <- sum(pheno$FEMALE == 0, na.rm = TRUE)
+  n_female <- sum(pheno$FEMALE == 1, na.rm = TRUE)
+  
+  # Step 6: Subset creation
+  # Set both to NULL if either gender is missing
+  if (n_male == 0 || n_female == 0) {
+    warning("Dataset contains only one gender. Male and female subsets will be NULL.")
+    male_pheno <- NULL
+    female_pheno <- NULL
+  } else {
+    male_pheno <- pheno[pheno$FEMALE == 0, ]
+    female_pheno <- pheno[pheno$FEMALE == 1, ]
+  }
+  
+  # Step 7: Mixed effects flag
+  requires_mixed_effects <- max(pheno$FU, na.rm = TRUE) >= 2
+  
+  # Step 8: Column cleanup
+  cols_to_keep <- c(required_cols, additional_covariates)
+  cols_to_keep <- intersect(cols_to_keep, names(pheno))
+  
+  pheno <- pheno[, cols_to_keep, drop = FALSE]
+  if (!is.null(male_pheno)) {
+    male_pheno <- male_pheno[, cols_to_keep, drop = FALSE]
+    female_pheno <- female_pheno[, cols_to_keep, drop = FALSE]
+  }
+  
+  # Return structure
+  list(
+    all = pheno,
+    male = male_pheno,
+    female = female_pheno,
+    requires_mixed_effects = requires_mixed_effects
+  )
+}
+
+
+.validate_omics <- function(omics, pheno_list) {
+  
+  # Step 1: Input validation and conversion
+  if (is.matrix(omics)) {
+    omics <- as.data.frame(omics)
+  } else if (!is.data.frame(omics)) {
+    stop("omics must be a data.frame or matrix")
+  }
+  
+  # Step 2: Extract analyte names
+  if (!"ANALYTE_NAME" %in% names(omics)) {
+    stop("omics must contain ANALYTE_NAME column")
+  }
+  
+  analyte_names <- omics$ANALYTE_NAME
+  
+  # Remove ANALYTE_NAME column to get numeric data
+  omics_numeric <- omics[, setdiff(names(omics), "ANALYTE_NAME"), drop = FALSE]
+  
+  # Step 3: Validate all data is numeric
+  if (!all(sapply(omics_numeric, is.numeric))) {
+    stop("All columns in omics (except ANALYTE_NAME) must be numeric")
+  }
+  
+   # Step 4: Filter to shared SAMPLE_IDs with pheno_list$all
+   pheno_sample_ids <- pheno_list$all$SAMPLE_ID
+   omics_sample_ids <- names(omics_numeric)
+    
+   shared_samples <- intersect(omics_sample_ids, pheno_sample_ids)
+   
+   if (length(shared_samples) == 0) {
+     stop("No overlap between omics column names and pheno SAMPLE_IDs")
+   }
+   
+   message("Found ", length(shared_samples), " samples shared between omics and pheno")
+   message("  Omics only: ", length(setdiff(omics_sample_ids, pheno_sample_ids)))
+   message("  Pheno only: ", length(setdiff(pheno_sample_ids, omics_sample_ids)))
+  
+  # Filter omics to shared samples (keep order from pheno for consistency)
+  omics_numeric <- omics_numeric[, shared_samples, drop = FALSE]
+  
+  # Step 5: Quality checks
+  n_with_na <- 0
+  n_with_nzv <- 0
+  
+  for (i in seq_along(analyte_names)) {
+    analyte_data <- as.numeric(omics_numeric[i, ])
+    
+    if (any(is.na(analyte_data))) {
+      n_with_na <- n_with_na + 1
+    }
+    
+    if (.is_near_zero_variance(analyte_data)) {
+      n_with_nzv <- n_with_nzv + 1
+    }
+  }
+  
+  # Summmarize analyte NA/NZVs
+  if (n_with_na > 0) {
+    warning(n_with_na, " analytes contain NA values")
+  }
+  
+  if (n_with_nzv > 0) {
+    warning(n_with_nzv, " analytes have near-zero variance")
+  }
+  
+  # Add ANALYTE_NAME back to the omics data.frames
+  omics_all <- cbind(ANALYTE_NAME = analyte_names, omics_numeric)
+   
+  # Male subset
+  omics_male <- NULL
+  if (!is.null(pheno_list$male)) {
+    male_sample_ids <- pheno_list$male$SAMPLE_ID
+    male_cols <- intersect(colnames(omics_all), male_sample_ids)
+    omics_male <- omics_all[, c("ANALYTE_NAME", male_cols), drop = FALSE]
+  }
+  
+  # Female subset
+  omics_female <- NULL
+  if (!is.null(pheno_list$female)) {
+    female_sample_ids <- pheno_list$female$SAMPLE_ID
+    female_cols <- intersect(colnames(omics_all), female_sample_ids)
+    omics_female <- omics_all[, c("ANALYTE_NAME", female_cols), drop = FALSE]
+  }
+  
+  # Step 7: Return structure
+  list(
+    all = omics_all,
+    male = omics_male,
+    female = omics_female
+  )
+}
