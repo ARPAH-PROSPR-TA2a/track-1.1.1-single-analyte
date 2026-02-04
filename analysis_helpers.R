@@ -105,51 +105,7 @@
   }
 }
 
-# Needed anymore?
-.prepare_change_scores <- function(pheno_df, omics_df) {
-  
-  # Extract baseline measurements (FU == 0)
-  pheno_baseline <- pheno_df[pheno_df$FU == 0, ]
-  baseline_sample_ids <- pheno_baseline$SAMPLE_ID
-  
-  # Filter omics to baseline samples only
-  omics_baseline <- omics_df[, colnames(omics_df) %in% baseline_sample_ids, drop = FALSE]
-  
-  # Filter pheno to remove baseline measurements (FU != 0)
-  pheno_analysis <- pheno_df[pheno_df$FU != 0, ]
-  analysis_sample_ids <- pheno_analysis$SAMPLE_ID
-  
-  # Filter omics to keep only post-baseline samples (raw values, NOT change scores)
-  analysis_cols <- c("ANALYTE_NAME", analysis_sample_ids[analysis_sample_ids %in% colnames(omics_df)])
-  omics_analysis <- omics_df[, analysis_cols, drop = FALSE]
-  
-  # Return:
-  # - pheno_analysis: pheno with FU > 0 only
-  # - omics_analysis: omics with post-baseline samples, raw (not change) values
-  # - baseline_data: baseline pheno and omics for on-the-fly change score computation
-  return(list(
-    pheno_analysis = pheno_analysis,
-    omics_analysis = omics_analysis,
-    baseline_data = list(
-      pheno_baseline = pheno_baseline,
-      omics_baseline = omics_baseline
-    )
-  ))
-}
-
-
-.perform_limma_analysis <- function(pheno_df, omics_df, baseline_data, additional_covariates = NULL) {
-  
-  # TODO: Implement limma analysis for DNAm data
-  # This function will handle per-FU limma models for differential methylation analysis
-  # For now, return NULL as placeholder
-  
-  warning(".perform_limma_analysis() not yet implemented")
-  return(NULL)
-}
-
-
-.perform_lm_analysis <- function(pheno_df, omics_df, baseline_data, additional_covariates = NULL) {
+.perform_lm_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL) {
   
   # Linear regression for single follow-up timepoint only
   
@@ -182,9 +138,7 @@
     stop(".perform_lm_analysis() requires exactly one FU level, found: ", paste(fu_level, collapse = ", "))
   }
   
-  # Extract baseline data for lookup
-  pheno_baseline <- baseline_data$pheno_baseline
-  omics_baseline <- baseline_data$omics_baseline
+  # Baseline data for lookup
   baseline_subject_ids <- pheno_baseline$SUBJECT_ID
   
   # Build model formula
@@ -267,7 +221,7 @@
 }
 
 
-.perform_lme4_analysis <- function(pheno_df, omics_df, baseline_data, additional_covariates = NULL) {
+.perform_lme4_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL) {
   
   # Load required packages
   require(lme4)
@@ -299,9 +253,7 @@
   # Get FU levels present in data
   fu_levels <- sort(unique(pheno_merged$FU))
   
-  # Extract baseline data for lookup
-  pheno_baseline <- baseline_data$pheno_baseline
-  omics_baseline <- baseline_data$omics_baseline
+  # Baseline data for lookup
   baseline_subject_ids <- pheno_baseline$SUBJECT_ID
   
   # Build model formula
@@ -394,30 +346,41 @@
 }
 
 
+.perform_limma_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL) {
+  
+  # TODO: Implement limma analysis for DNAm data
+  # This function will handle per-FU limma models for differential methylation analysis
+  # For now, return NULL as placeholder
+  
+  warning(".perform_limma_analysis() not yet implemented")
+  return(NULL)
+}
+
+
 .perform_analysis <- function(pheno_df, omics_df, omics_type, mixed_effects, additional_covariates = NULL) {
   
-  # STEP 1: Prepare analysis data and baseline data
-  prep <- .prepare_change_scores(pheno_df, omics_df)
-  pheno_analysis <- prep$pheno_analysis
-  omics_analysis <- prep$omics_analysis
-  baseline_data <- prep$baseline_data
+  # STEP 1: Extract baseline data for all analysis functions
+  pheno_baseline <- pheno_df[pheno_df$FU == 0, ]
+  baseline_sample_ids <- pheno_baseline$SAMPLE_ID
+  omics_baseline <- omics_df[, colnames(omics_df) %in% baseline_sample_ids, drop = FALSE]
   
-  # Explicit cleanup
-  rm(list = c("pheno_df", "omics_df", "prep"), envir = environment())
+  # Filter to post-baseline analysis data (FU > 0)
+  pheno_analysis <- pheno_df[pheno_df$FU != 0, ]
+  omics_analysis <- omics_df
   
   # STEP 2: Dispatch to appropriate analysis function
   if (omics_type == "DNAm") {
     # Limma handles all FU logic internally
-    results <- .perform_limma_analysis(pheno_analysis, omics_analysis, baseline_data, additional_covariates)
+    results <- .perform_limma_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates)
   } else {
     # Proteomics/Metabolomics - check if LM or LME4
     max_fu <- max(pheno_analysis$FU, na.rm = TRUE)
     if (max_fu == 1) {
       # Single follow-up: use linear regression
-      results <- .perform_lm_analysis(pheno_analysis, omics_analysis, baseline_data, additional_covariates)
+      results <- .perform_lm_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates)
     } else {
       # Multiple follow-ups: use mixed effects
-      results <- .perform_lme4_analysis(pheno_analysis, omics_analysis, baseline_data, additional_covariates)
+      results <- .perform_lme4_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates)
     }
   }
   
