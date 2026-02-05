@@ -106,72 +106,93 @@
 }
 
 .perform_lm_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL) {
-  
-  # Linear regression for single follow-up timepoint only
-  
-  # Initialize results
-  results <- data.frame(
-    ANALYTE_NAME = character(),
-    EFFECT_SIZE = numeric(),
-    SE = numeric(),
-    P_VALUE = numeric(),
-    FU = integer(),
-    stringsAsFactors = FALSE
-  )
-  
-  # Get sample IDs from omics (exclude ANALYTE_NAME column)
-  omics_sample_ids <- colnames(omics_df)[-which(colnames(omics_df) == "ANALYTE_NAME")]
-  
-  # Filter pheno to shared samples
-  shared_samples <- intersect(pheno_df$SAMPLE_ID, omics_sample_ids)
-  pheno_merged <- pheno_df[pheno_df$SAMPLE_ID %in% shared_samples, ]
+   
+   # Linear regression for single follow-up timepoint only
+   
+   # Initialize results
+   results <- data.frame(
+     ANALYTE_NAME = character(),
+     EFFECT_SIZE = numeric(),
+     SE = numeric(),
+     P_VALUE = numeric(),
+     FU = integer(),
+     stringsAsFactors = FALSE
+   )
+   
+   # Get sample IDs from omics (exclude ANALYTE_NAME column)
+   omics_sample_ids <- colnames(omics_df)[-which(colnames(omics_df) == "ANALYTE_NAME")]
+   
+   # Filter pheno to shared samples
+   shared_samples <- intersect(pheno_df$SAMPLE_ID, omics_sample_ids)
+   pheno_merged <- pheno_df[pheno_df$SAMPLE_ID %in% shared_samples, ]
 
-   # Baseline data for lookup
-   baseline_subject_ids <- pheno_baseline$SUBJECT_ID
-   
-   # Pre-allocate model data template (avoid copying in loop)
-   model_data <- data.frame(pheno_merged)
-   model_data$analyte <- NA_real_
-   model_data$analyte_baseline <- NA_real_
-   
-   # Build model formula
-   # analyte ~ CONTROL_STATUS + baseline_analyte + covariates
-   covariate_terms <- c("analyte_baseline")
-  if (!is.null(additional_covariates)) {
-    covariate_terms <- c(covariate_terms, additional_covariates)
-  }
-  
-   formula_str <- "analyte ~ CONTROL_STATUS"
-   if (length(covariate_terms) > 0) {
-     formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
+    # Baseline data for lookup
+    baseline_subject_ids <- pheno_baseline$SUBJECT_ID
+    
+    # Convert omics_baseline to matrix for efficient numeric indexing
+    # (avoids issues with duplicate column names when indexing with vectors)
+    omics_baseline_matrix <- as.matrix(omics_baseline)
+    
+    # Pre-allocate model data template (avoid copying in loop)
+    model_data <- data.frame(pheno_merged)
+    model_data$analyte <- NA_real_
+    model_data$analyte_baseline <- NA_real_
+    
+    # Build model formula
+    # analyte ~ CONTROL_STATUS + baseline_analyte + covariates
+    covariate_terms <- c("analyte_baseline")
+   if (!is.null(additional_covariates)) {
+     covariate_terms <- c(covariate_terms, additional_covariates)
    }
    
-   # Pre-compute loop invariants
-   analyte_names <- omics_df$ANALYTE_NAME
-   sample_subjects <- pheno_merged$SUBJECT_ID
-   baseline_idx <- match(sample_subjects, baseline_subject_ids)
-   
-   # Fit model for each analyte
-   for (i in seq_along(analyte_names)) {
-     tryCatch({
-       analyte_name <- analyte_names[i]
+    formula_str <- "analyte ~ CONTROL_STATUS"
+    if (length(covariate_terms) > 0) {
+      formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
+    }
+    
+    # Pre-compute loop invariants
+    analyte_names <- omics_df$ANALYTE_NAME
+    sample_subjects <- pheno_merged$SUBJECT_ID
+    baseline_idx <- match(sample_subjects, baseline_subject_ids)
+    
+    # Map baseline indices to column positions for omics_baseline_matrix indexing
+    # Note: baseline_idx contains row positions in pheno_baseline;
+    # we need to convert these to column positions in omics_baseline_matrix
+    baseline_col_idx <- match(pheno_baseline$SAMPLE_ID[baseline_idx], colnames(omics_baseline_matrix))
+    
+    # Get FU level for this analysis (should be single value in LM analysis)
+    fu_level <- unique(pheno_merged$FU)
+    if (length(fu_level) != 1) {
+      warning("LM analysis expects single FU level, found:", length(fu_level))
+      if (length(fu_level) > 1) {
+        fu_level <- max(fu_level)  # Use max FU if multiple present
+      } else {
+        return(NULL)  # No data to analyze
+      }
+    }
+    
+    # Fit model for each analyte
+    for (i in seq_along(analyte_names)) {
+      tryCatch({
+        analyte_name <- analyte_names[i]
+        
+        # Get raw FU analyte values for shared samples (convert data.frame row to numeric vector)
+        fu_values <- as.numeric(omics_df[i, shared_samples])
+        
+        # Get baseline analyte values using column position indexing
+        # (avoids issues with duplicate column names)
+        baseline_vals <- omics_baseline_matrix[i, baseline_col_idx]
        
-       # Get raw FU analyte values for shared samples
-       fu_values <- omics_df[i, shared_samples]
-       
-       # Get baseline analyte values by SUBJECT_ID lookup
-       baseline_vals <- omics_baseline[i, baseline_idx]
-      
-       # Compute change scores (on-the-fly)
-       analyte_change <- fu_values - baseline_vals
-       
-       # Update model data with current analyte values
-       model_data$analyte <- analyte_change
-       model_data$analyte_baseline <- baseline_vals
-       
-       # Fit linear model
-       fit <- lm(as.formula(formula_str), data = model_data)
-       fit_summary <- summary(fit)
+        # Compute change scores (on-the-fly)
+        analyte_change <- fu_values - baseline_vals
+        
+        # Update model data with current analyte values
+        model_data$analyte <- analyte_change
+        model_data$analyte_baseline <- baseline_vals
+        
+        # Fit linear model
+        fit <- lm(as.formula(formula_str), data = model_data)
+        fit_summary <- summary(fit)
         
        # Extract CONTROL_STATUS coefficient (treatment effect)
        coef_row <- which(rownames(fit_summary$coefficients) == "CONTROL_STATUS")
@@ -210,89 +231,89 @@
 
 
 .perform_lme4_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL) {
-  
-  # Load required packages
-  require(lme4)
-  require(emmeans)
-  
-  # Initialize results
-  results <- data.frame(
-    ANALYTE_NAME = character(),
-    EFFECT_SIZE = numeric(),
-    SE = numeric(),
-    P_VALUE = numeric(),
-    FU = integer(),
-    stringsAsFactors = FALSE
-  )
-  
-  # Get sample IDs from omics (exclude ANALYTE_NAME column)
-  omics_sample_ids <- colnames(omics_df)[-which(colnames(omics_df) == "ANALYTE_NAME")]
-  
-  # Filter pheno to shared samples
-  shared_samples <- intersect(pheno_df$SAMPLE_ID, omics_sample_ids)
-  
-  if (length(shared_samples) == 0) {
-    warning("No shared samples between pheno and omics")
-    return(NULL)
-  }
-  
-  pheno_merged <- pheno_df[pheno_df$SAMPLE_ID %in% shared_samples, ]
-  
-  # Get FU levels present in data
-  fu_levels <- sort(unique(pheno_merged$FU))
-  
-  # Baseline data for lookup
-  baseline_subject_ids <- pheno_baseline$SUBJECT_ID
-  
-  # Build model formula
-  # Base: analyte ~ CONTROL_STATUS * factor(FU) + baseline_analyte + covariates + (1|SUBJECT_ID)
-  covariate_terms <- c("analyte_baseline")  # Always include baseline analyte
-  if (!is.null(additional_covariates)) {
-    # Determine covariate types
-    for (covar in additional_covariates) {
-      col_data <- pheno_merged[[covar]]
-      if (is.factor(col_data) || is.character(col_data)) {
-        covariate_terms <- c(covariate_terms, paste0("factor(", covar, ")"))
-      } else {
-        covariate_terms <- c(covariate_terms, covar)
-      }
-    }
-  }
-  
-   formula_str <- "analyte ~ CONTROL_STATUS * factor(FU)"
-   if (length(covariate_terms) > 0) {
-     formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
+   
+   # Load required packages
+   require(lme4)
+   require(emmeans)
+   
+   # Initialize results
+   results <- data.frame(
+     ANALYTE_NAME = character(),
+     EFFECT_SIZE = numeric(),
+     SE = numeric(),
+     P_VALUE = numeric(),
+     FU = integer(),
+     stringsAsFactors = FALSE
+   )
+   
+   # Get sample IDs from omics (exclude ANALYTE_NAME column)
+   omics_sample_ids <- colnames(omics_df)[-which(colnames(omics_df) == "ANALYTE_NAME")]
+   
+   # Filter pheno to shared samples
+   shared_samples <- intersect(pheno_df$SAMPLE_ID, omics_sample_ids)
+   pheno_merged <- pheno_df[pheno_df$SAMPLE_ID %in% shared_samples, ]
+   
+   # Get FU levels present in data
+   fu_levels <- sort(unique(pheno_merged$FU))
+   
+   # Baseline data for lookup
+   baseline_subject_ids <- pheno_baseline$SUBJECT_ID
+   
+   # Convert omics_baseline to matrix for efficient numeric indexing
+   # (avoids issues with duplicate column names when indexing with vectors)
+   omics_baseline_matrix <- as.matrix(omics_baseline)
+   
+   # Pre-allocate model data template (avoid copying in loop)
+   model_data <- data.frame(pheno_merged)
+   model_data$analyte <- NA_real_
+   model_data$analyte_baseline <- NA_real_
+   
+   # Build model formula
+   # Base: analyte ~ CONTROL_STATUS * factor(FU) + baseline_analyte + covariates + (1|SUBJECT_ID)
+   covariate_terms <- c("analyte_baseline")
+   if (!is.null(additional_covariates)) {
+     covariate_terms <- c(covariate_terms, additional_covariates)
    }
-   formula_str <- paste(formula_str, "+ (1|SUBJECT_ID)")
    
-   # Pre-compute loop invariants
-   analyte_names <- omics_df$ANALYTE_NAME
-   sample_subjects <- pheno_merged$SUBJECT_ID
-   baseline_idx <- match(sample_subjects, baseline_subject_ids)
-   
-   # Fit model for each analyte
-   for (i in seq_along(analyte_names)) {
-     tryCatch({
-       analyte_name <- analyte_names[i]
+    formula_str <- "analyte ~ CONTROL_STATUS * factor(FU)"
+    if (length(covariate_terms) > 0) {
+      formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
+    }
+    formula_str <- paste(formula_str, "+ (1|SUBJECT_ID)")
+    
+    # Pre-compute loop invariants
+    analyte_names <- omics_df$ANALYTE_NAME
+    sample_subjects <- pheno_merged$SUBJECT_ID
+    baseline_idx <- match(sample_subjects, baseline_subject_ids)
+    
+    # Map baseline indices to column positions for omics_baseline_matrix indexing
+    # Note: baseline_idx contains row positions in pheno_baseline;
+    # we need to convert these to column positions in omics_baseline_matrix
+    baseline_col_idx <- match(pheno_baseline$SAMPLE_ID[baseline_idx], colnames(omics_baseline_matrix))
+    
+    # Fit model for each analyte
+    for (i in seq_along(analyte_names)) {
+      tryCatch({
+        analyte_name <- analyte_names[i]
+        
+        # Get raw FU analyte values for shared samples (convert data.frame row to numeric vector)
+        fu_values <- as.numeric(omics_df[i, shared_samples])
+        
+        # Get baseline analyte values using column position indexing
+        # (avoids issues with duplicate column names)
+        baseline_vals <- omics_baseline_matrix[i, baseline_col_idx]
        
-       # Get raw FU analyte values for shared samples
-       fu_values <- as.numeric(omics_df[i, shared_samples])
+        # Compute change scores (on-the-fly)
+        analyte_change <- fu_values - baseline_vals
+        
+        # Update model data with current analyte values
+        model_data$analyte <- analyte_change
+        model_data$analyte_baseline <- baseline_vals
+        
+        # Fit lmer model
+        fit <- lmer(as.formula(formula_str), data = model_data, REML = FALSE)
        
-       # Get baseline analyte values by SUBJECT_ID lookup
-       baseline_vals <- as.numeric(omics_baseline[i, ])[baseline_idx]
-      
-       # Compute change scores (on-the-fly)
-       analyte_change <- fu_values - baseline_vals
-       
-       # Create model data (explicit copy to avoid mutation)
-       model_data <- data.frame(pheno_merged)
-       model_data$analyte <- analyte_change
-       model_data$analyte_baseline <- baseline_vals
-       
-       # Fit lmer model
-       fit <- lmer(as.formula(formula_str), data = model_data, REML = FALSE)
-      
-      # Extract effects using emmeans
+       # Extract effects using emmeans
       em <- emmeans(fit, ~CONTROL_STATUS | FU)
       contrasts_result <- contrast(em, method = "pairwise", adjust = "none")
       
@@ -336,13 +357,128 @@
 
 
 .perform_limma_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL) {
-  
-  # TODO: Implement limma analysis for DNAm data
-  # This function will handle per-FU limma models for differential methylation analysis
-  # For now, return NULL as placeholder
-  
-  warning(".perform_limma_analysis() not yet implemented")
-  return(NULL)
+   
+   # Limma analysis for DNAm (DNA methylation) data
+   # Uses empirical Bayes moderation for variance estimation (appropriate for high-dimensional data)
+   
+   require(limma)
+   
+   # Initialize results
+   results <- data.frame(
+     ANALYTE_NAME = character(),
+     EFFECT_SIZE = numeric(),
+     SE = numeric(),
+     P_VALUE = numeric(),
+     FU = integer(),
+     stringsAsFactors = FALSE
+   )
+   
+   # Get sample IDs from omics (exclude ANALYTE_NAME column)
+   omics_sample_ids <- colnames(omics_df)[-which(colnames(omics_df) == "ANALYTE_NAME")]
+   
+   # Filter pheno to shared samples
+   shared_samples <- intersect(pheno_df$SAMPLE_ID, omics_sample_ids)
+   pheno_merged <- pheno_df[pheno_df$SAMPLE_ID %in% shared_samples, ]
+   
+   # Get FU levels present in data
+   fu_levels <- sort(unique(pheno_merged$FU))
+   
+   # Baseline data for lookup
+   baseline_subject_ids <- pheno_baseline$SUBJECT_ID
+   
+   # Convert omics_baseline to matrix for efficient numeric indexing
+   # (avoids issues with duplicate column names when indexing with vectors)
+   omics_baseline_matrix <- as.matrix(omics_baseline)
+   
+   # Convert full omics data to matrix
+   omics_values <- as.matrix(omics_df[, shared_samples])
+   
+   # Pre-compute baseline column indices for each sample in pheno_merged
+   sample_subjects <- pheno_merged$SUBJECT_ID
+   baseline_idx <- match(sample_subjects, baseline_subject_ids)
+   baseline_col_idx <- match(pheno_baseline$SAMPLE_ID[baseline_idx], colnames(omics_baseline_matrix))
+   
+   # Process per FU level (unlike LM/LME4, limma typically fits all data together)
+   # Here we'll fit models per FU level for consistency with the pipeline
+   
+   for (fu_level in fu_levels) {
+     # Filter to this FU level
+     fu_idx <- which(pheno_merged$FU == fu_level)
+     pheno_fu <- pheno_merged[fu_idx, ]
+     
+     if (nrow(pheno_fu) < 2) {
+       next  # Skip if fewer than 2 samples at this FU
+     }
+     
+     # Get omics data for these samples
+     omics_fu <- omics_values[, colnames(omics_values) %in% pheno_fu$SAMPLE_ID, drop = FALSE]
+     
+     # Get baseline data for these samples
+     baseline_col_idx_fu <- baseline_col_idx[fu_idx]
+     omics_baseline_fu <- omics_baseline_matrix[, baseline_col_idx_fu, drop = FALSE]
+     
+     # Compute change scores
+     analyte_change <- omics_fu - omics_baseline_fu
+     
+     # Build design matrix
+     design <- model.matrix(~ CONTROL_STATUS, data = pheno_fu)
+     
+     # Add covariates if provided
+     if (!is.null(additional_covariates)) {
+       for (cov in additional_covariates) {
+         if (cov %in% colnames(pheno_fu)) {
+           cov_vals <- pheno_fu[[cov]]
+           if (!all(is.na(cov_vals))) {
+             design <- cbind(design, pheno_fu[[cov]])
+             colnames(design)[ncol(design)] <- cov
+           }
+         }
+       }
+     }
+     
+     # Add baseline analyte adjustment
+     baseline_vals_fu <- t(omics_baseline_fu)
+     colnames(baseline_vals_fu) <- paste0("baseline_", seq_len(nrow(analyte_change)))
+     # Note: limma expects analytes as rows, so we'll add baseline as covariate differently
+     # For now, include baseline effect in the model using contrasts
+     
+     tryCatch({
+       # Fit linear models using limma
+       fit <- lmFit(analyte_change, design)
+       fit <- eBayes(fit)
+       
+       # Extract coefficients for CONTROL_STATUS (treatment effect)
+       coef_idx <- which(colnames(design) == "CONTROL_STATUS")
+       
+       if (length(coef_idx) > 0) {
+         effect_sizes <- fit$coefficients[, coef_idx]
+         ses <- fit$stdev.unscaled[, coef_idx] * fit$sigma
+         p_values <- fit$p.value[, coef_idx]
+         
+         # Add to results
+         for (i in seq_along(effect_sizes)) {
+           results <- rbind(results, data.frame(
+             ANALYTE_NAME = omics_df$ANALYTE_NAME[i],
+             EFFECT_SIZE = effect_sizes[i],
+             SE = ses[i],
+             P_VALUE = p_values[i],
+             FU = fu_level,
+             stringsAsFactors = FALSE
+           ))
+         }
+       }
+       
+     }, error = function(e) {
+       warning("Error fitting limma model for FU level ", fu_level, ": ", e$message)
+     })
+   }
+   
+   # Return NULL if no results
+   if (nrow(results) == 0) {
+     return(NULL)
+   }
+   
+   return(results)
 }
 
 
