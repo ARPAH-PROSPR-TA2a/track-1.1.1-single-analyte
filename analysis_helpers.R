@@ -107,17 +107,18 @@
 
 .perform_lm_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL) {
    
-   # Linear regression for single follow-up timepoint only
-   
-   # Initialize results
-   results <- data.frame(
-     ANALYTE_NAME = character(),
-     EFFECT_SIZE = numeric(),
-     SE = numeric(),
-     P_VALUE = numeric(),
-     FU = integer(),
-     stringsAsFactors = FALSE
-   )
+    # Linear regression for single follow-up timepoint only
+    # Extracts ALL fixed effect coefficients (treatment, covariates)
+    
+    # Initialize results
+    results <- data.frame(
+      ANALYTE_NAME = character(),
+      COEFFICIENT = character(),
+      EFFECT_SIZE = numeric(),
+      SE = numeric(),
+      P_VALUE = numeric(),
+      stringsAsFactors = FALSE
+    )
    
    # Get sample IDs from omics (exclude ANALYTE_NAME column)
    omics_sample_ids <- colnames(omics_df)[-which(colnames(omics_df) == "ANALYTE_NAME")]
@@ -190,31 +191,35 @@
         model_data$analyte <- analyte_change
         model_data$analyte_baseline <- baseline_vals
         
-        # Fit linear model
-        fit <- lm(as.formula(formula_str), data = model_data)
-        fit_summary <- summary(fit)
+         # Fit linear model
+         fit <- lm(as.formula(formula_str), data = model_data)
+         fit_summary <- summary(fit)
+         
+        # Extract all fixed effect coefficients (except intercept)
+        coef_table <- fit_summary$coefficients
         
-       # Extract CONTROL_STATUS coefficient (treatment effect)
-       coef_row <- which(rownames(fit_summary$coefficients) == "CONTROL_STATUS")
-        
-       # Skip if coefficient not found
-       if (length(coef_row) == 0) {
-          next
-       }
-        
-       # Extract and append results
-       effect_size <- fit_summary$coefficients[coef_row, "Estimate"]
-       se <- fit_summary$coefficients[coef_row, "Std. Error"]
-       p_value <- fit_summary$coefficients[coef_row, "Pr(>|t|)"]
-        
-       results <- rbind(results, data.frame(
-          ANALYTE_NAME = analyte_name,
-          EFFECT_SIZE = effect_size,
-          SE = se,
-          P_VALUE = p_value,
-          FU = fu_level,
-          stringsAsFactors = FALSE
-        ))
+        # Loop through all coefficients
+        for (coef_name in rownames(coef_table)) {
+          # Skip intercept
+          if (coef_name == "(Intercept)") {
+            next
+          }
+          
+          # Extract coefficient info
+          effect_size <- coef_table[coef_name, "Estimate"]
+          se <- coef_table[coef_name, "Std. Error"]
+          p_value <- coef_table[coef_name, "Pr(>|t|)"]
+          
+          # Add to results
+          results <- rbind(results, data.frame(
+            ANALYTE_NAME = analyte_name,
+            COEFFICIENT = coef_name,
+            EFFECT_SIZE = effect_size,
+            SE = se,
+            P_VALUE = p_value,
+            stringsAsFactors = FALSE
+          ))
+        }
       
     }, error = function(e) {
       warning("Error processing analyte '", analyte_names[i], "': ", e$message)
@@ -235,17 +240,17 @@
     # Load required packages
     require(lme4)
    
-   # Initialize results
-   results <- data.frame(
-     ANALYTE_NAME = character(),
-     EFFECT_SIZE = numeric(),
-     SE = numeric(),
-     P_VALUE = numeric(),
-     FU = integer(),
-     stringsAsFactors = FALSE
-   )
-   
-   # Get sample IDs from omics (exclude ANALYTE_NAME column)
+    # Initialize results
+    results <- data.frame(
+      ANALYTE_NAME = character(),
+      COEFFICIENT = character(),
+      EFFECT_SIZE = numeric(),
+      SE = numeric(),
+      P_VALUE = numeric(),
+      stringsAsFactors = FALSE
+    )
+    
+    # Get sample IDs from omics (exclude ANALYTE_NAME column)
    omics_sample_ids <- colnames(omics_df)[-which(colnames(omics_df) == "ANALYTE_NAME")]
    
    # Filter pheno to shared samples
@@ -269,7 +274,7 @@
    
     # Build model formula
     # analyte ~ CONTROL_STATUS * factor(FU) + baseline_analyte + covariates + (1|SUBJECT_ID)
-    # Extracts CONTROL_STATUS coefficient for FU=1, CONTROL_STATUS:factor(FU)2 for FU=2, etc.
+    # Extracts ALL fixed effect coefficients from the model
     covariate_terms <- c("analyte_baseline")
    if (!is.null(additional_covariates)) {
      covariate_terms <- c(covariate_terms, additional_covariates)
@@ -322,33 +327,27 @@
         n_fixed_effects <- nrow(coef_table)
         df_approx <- nrow(model_data) - n_fixed_effects
         
-        # Extract results per FU level
-        for (fu_level in fu_levels) {
-          if (fu_level == fu_levels[1]) {
-            # First FU level: extract CONTROL_STATUS coefficient
-            coef_name <- "CONTROL_STATUS"
-          } else {
-            # Subsequent FU levels: extract CONTROL_STATUS:factor(FU) interaction
-            coef_name <- paste0("CONTROL_STATUS:factor(FU)", fu_level)
+        # Extract all fixed effect coefficients (except intercept)
+        for (coef_name in rownames(coef_table)) {
+          # Skip intercept
+          if (coef_name == "(Intercept)") {
+            next
           }
           
-          # Check if coefficient exists in model
-          if (coef_name %in% rownames(coef_table)) {
-            effect_size <- coef_table[coef_name, "Estimate"]
-            se <- coef_table[coef_name, "Std. Error"]
-            t_stat <- coef_table[coef_name, "t value"]
-            # Compute p-value from t-statistic
-            p_value <- 2 * pt(-abs(t_stat), df = df_approx)
-            
-            results <- rbind(results, data.frame(
-              ANALYTE_NAME = analyte_name,
-              EFFECT_SIZE = effect_size,
-              SE = se,
-              P_VALUE = p_value,
-              FU = fu_level,
-              stringsAsFactors = FALSE
-            ))
-          }
+          effect_size <- coef_table[coef_name, "Estimate"]
+          se <- coef_table[coef_name, "Std. Error"]
+          t_stat <- coef_table[coef_name, "t value"]
+          # Compute p-value from t-statistic
+          p_value <- 2 * pt(-abs(t_stat), df = df_approx)
+          
+          results <- rbind(results, data.frame(
+            ANALYTE_NAME = analyte_name,
+            COEFFICIENT = coef_name,
+            EFFECT_SIZE = effect_size,
+            SE = se,
+            P_VALUE = p_value,
+            stringsAsFactors = FALSE
+          ))
         }
       
     }, error = function(e) {
@@ -403,7 +402,8 @@
    # Compute change scores vectorized: analyte_change is (n_analytes × n_samples) matrix
    analyte_change <- omics_values - omics_baseline_merged
    
-    # Build design matrix for ALL samples with CONTROL_STATUS and FU interaction
+    # Build design matrix for ALL samples with all fixed effects
+    # Extracts ALL coefficients (treatment, time, covariates) for each analyte
     # Implicit baseline adjustment via change scores; repeated measures via duplicateCorrelation
     # Approximates LME4's (1|SUBJECT_ID) random intercept using LIMMA's block/correlation approach
     pheno_merged$FU_factor <- factor(pheno_merged$FU)
@@ -434,37 +434,33 @@
                    correlation = cor$consensus.correlation)
       fit <- eBayes(fit)
      
-     # Initialize results data frame with pre-allocated capacity (avoid rbind in loop)
-     n_analytes <- nrow(analyte_change)
-     n_fu_levels <- length(fu_levels)
-     max_rows <- n_analytes * n_fu_levels
-     
-     results <- data.frame(
-       ANALYTE_NAME = character(max_rows),
-       EFFECT_SIZE = numeric(max_rows),
-       SE = numeric(max_rows),
-       P_VALUE = numeric(max_rows),
-       FU = integer(max_rows),
-       stringsAsFactors = FALSE
-     )
+      # Initialize results data frame with pre-allocated capacity (avoid rbind in loop)
+      # Note: number of rows = n_analytes * number_of_coefficients
+      n_analytes <- nrow(analyte_change)
+      n_coefficients <- ncol(design)  # One column per coefficient (including intercept, which we'll skip)
+      max_rows <- n_analytes * n_coefficients
+      
+      results <- data.frame(
+        ANALYTE_NAME = character(max_rows),
+        COEFFICIENT = character(max_rows),
+        EFFECT_SIZE = numeric(max_rows),
+        SE = numeric(max_rows),
+        P_VALUE = numeric(max_rows),
+        stringsAsFactors = FALSE
+      )
      
      row_idx <- 0
      
-      # Extract results per FU level
-      # Each FU level gets its own direct coefficient from the model (no combining)
-      for (i in seq_along(fu_levels)) {
-        fu_level <- fu_levels[i]
-        
-        # Determine which coefficient to extract for this FU level
-        if (fu_level == fu_levels[1]) {
-          # First FU level: just CONTROL_STATUS coefficient
-          coef_name <- "CONTROL_STATUS"
-        } else {
-          # Subsequent FU levels: extract CONTROL_STATUS:FU_factor interaction directly
-          coef_name <- paste0("CONTROL_STATUS:FU_factor", fu_level)
+      # Extract all fixed effect coefficients (except intercept)
+      coef_names <- colnames(design)
+      
+      for (coef_name in coef_names) {
+        # Skip intercept
+        if (coef_name == "(Intercept)") {
+          next
         }
         
-        # Find coefficient index
+        # Find coefficient index in design matrix
         coef_idx <- which(colnames(design) == coef_name)
         
         if (length(coef_idx) > 0) {
@@ -477,10 +473,10 @@
           for (j in seq_len(n_analytes)) {
             row_idx <- row_idx + 1
             results$ANALYTE_NAME[row_idx] <- omics_df$ANALYTE_NAME[j]
+            results$COEFFICIENT[row_idx] <- coef_name
             results$EFFECT_SIZE[row_idx] <- effect_sizes[j]
             results$SE[row_idx] <- ses[j]
             results$P_VALUE[row_idx] <- p_values[j]
-            results$FU[row_idx] <- fu_level
           }
         }
       }
@@ -529,10 +525,13 @@
     }
   }
   
-  # STEP 3: Apply multiple testing correction
-  if (!is.null(results) && nrow(results) > 0) {
-    results <- .apply_multiple_testing_correction(results)
-  }
-  
-  return(results)
+   # STEP 3: Apply multiple testing correction
+   if (!is.null(results) && nrow(results) > 0) {
+     results <- .apply_multiple_testing_correction(results)
+     
+     # Sort by ANALYTE_NAME first, then COEFFICIENT for consistent ordering
+     results <- results[order(results$ANALYTE_NAME, results$COEFFICIENT), ]
+   }
+   
+   return(results)
 }
