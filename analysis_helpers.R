@@ -232,9 +232,8 @@
 
 .perform_lme4_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL) {
    
-   # Load required packages
-   require(lme4)
-   require(emmeans)
+    # Load required packages
+    require(lme4)
    
    # Initialize results
    results <- data.frame(
@@ -268,9 +267,10 @@
    model_data$analyte <- NA_real_
    model_data$analyte_baseline <- NA_real_
    
-   # Build model formula
-   # Base: analyte ~ CONTROL_STATUS * factor(FU) + baseline_analyte + covariates + (1|SUBJECT_ID)
-   covariate_terms <- c("analyte_baseline")
+    # Build model formula
+    # analyte ~ CONTROL_STATUS * factor(FU) + baseline_analyte + covariates + (1|SUBJECT_ID)
+    # Extracts CONTROL_STATUS coefficient for FU=1, CONTROL_STATUS:factor(FU)2 for FU=2, etc.
+    covariate_terms <- c("analyte_baseline")
    if (!is.null(additional_covariates)) {
      covariate_terms <- c(covariate_terms, additional_covariates)
    }
@@ -310,37 +310,46 @@
         model_data$analyte <- analyte_change
         model_data$analyte_baseline <- baseline_vals
         
-        # Fit lmer model
-        fit <- lmer(as.formula(formula_str), data = model_data, REML = FALSE)
-       
-       # Extract effects using emmeans
-      em <- emmeans(fit, ~CONTROL_STATUS | FU)
-      contrasts_result <- contrast(em, method = "pairwise", adjust = "none")
-      
-      # Convert to data.frame for extraction
-      results_df <- as.data.frame(contrasts_result)
-      
-      # Extract results per FU level
-      for (fu_level in fu_levels) {
-        fu_rows <- which(results_df$FU == fu_level)
+         # Fit lmer model
+         fit <- lmer(as.formula(formula_str), data = model_data, REML = FALSE)
         
-        if (length(fu_rows) > 0) {
-          row_idx <- fu_rows[1]
+        # Extract coefficients directly from summary
+        fit_summary <- summary(fit)
+        coef_table <- fit_summary$coefficients
+        
+        # Compute degrees of freedom for p-values
+        # Using approximation: df = nrow(model_data) - number of fixed effects
+        n_fixed_effects <- nrow(coef_table)
+        df_approx <- nrow(model_data) - n_fixed_effects
+        
+        # Extract results per FU level
+        for (fu_level in fu_levels) {
+          if (fu_level == fu_levels[1]) {
+            # First FU level: extract CONTROL_STATUS coefficient
+            coef_name <- "CONTROL_STATUS"
+          } else {
+            # Subsequent FU levels: extract CONTROL_STATUS:factor(FU) interaction
+            coef_name <- paste0("CONTROL_STATUS:factor(FU)", fu_level)
+          }
           
-          effect_size <- results_df$estimate[row_idx]
-          se <- results_df$SE[row_idx]
-          p_value <- results_df$p.value[row_idx]
-          
-          results <- rbind(results, data.frame(
-            ANALYTE_NAME = analyte_name,
-            EFFECT_SIZE = effect_size,
-            SE = se,
-            P_VALUE = p_value,
-            FU = fu_level,
-            stringsAsFactors = FALSE
-          ))
+          # Check if coefficient exists in model
+          if (coef_name %in% rownames(coef_table)) {
+            effect_size <- coef_table[coef_name, "Estimate"]
+            se <- coef_table[coef_name, "Std. Error"]
+            t_stat <- coef_table[coef_name, "t value"]
+            # Compute p-value from t-statistic
+            p_value <- 2 * pt(-abs(t_stat), df = df_approx)
+            
+            results <- rbind(results, data.frame(
+              ANALYTE_NAME = analyte_name,
+              EFFECT_SIZE = effect_size,
+              SE = se,
+              P_VALUE = p_value,
+              FU = fu_level,
+              stringsAsFactors = FALSE
+            ))
+          }
         }
-      }
       
     }, error = function(e) {
       warning("Error processing analyte '", analyte_names[i], "': ", e$message)
@@ -359,19 +368,10 @@
 .perform_limma_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL) {
    
    # Limma analysis for DNAm (DNA methylation) data
-   # Uses empirical Bayes moderation for variance estimation (appropriate for high-dimensional data)
+   # Vectorized approach: fits all FU levels simultaneously for speed with high-dimensional data
+   # Uses empirical Bayes moderation for variance estimation (appropriate for 1M+ analytes)
    
    require(limma)
-   
-   # Initialize results
-   results <- data.frame(
-     ANALYTE_NAME = character(),
-     EFFECT_SIZE = numeric(),
-     SE = numeric(),
-     P_VALUE = numeric(),
-     FU = integer(),
-     stringsAsFactors = FALSE
-   )
    
    # Get sample IDs from omics (exclude ANALYTE_NAME column)
    omics_sample_ids <- colnames(omics_df)[-which(colnames(omics_df) == "ANALYTE_NAME")]
@@ -387,98 +387,118 @@
    baseline_subject_ids <- pheno_baseline$SUBJECT_ID
    
    # Convert omics_baseline to matrix for efficient numeric indexing
-   # (avoids issues with duplicate column names when indexing with vectors)
    omics_baseline_matrix <- as.matrix(omics_baseline)
    
-   # Convert full omics data to matrix
+   # Convert full omics data to matrix (analytes × samples)
    omics_values <- as.matrix(omics_df[, shared_samples])
    
-   # Pre-compute baseline column indices for each sample in pheno_merged
+   # Pre-compute baseline values for each sample using numeric indexing (O(1) vs O(S×N))
    sample_subjects <- pheno_merged$SUBJECT_ID
    baseline_idx <- match(sample_subjects, baseline_subject_ids)
    baseline_col_idx <- match(pheno_baseline$SAMPLE_ID[baseline_idx], colnames(omics_baseline_matrix))
    
-   # Process per FU level (unlike LM/LME4, limma typically fits all data together)
-   # Here we'll fit models per FU level for consistency with the pipeline
+   # Get baseline values as matrix (analytes × samples)
+   omics_baseline_merged <- omics_baseline_matrix[, baseline_col_idx, drop = FALSE]
    
-   for (fu_level in fu_levels) {
-     # Filter to this FU level
-     fu_idx <- which(pheno_merged$FU == fu_level)
-     pheno_fu <- pheno_merged[fu_idx, ]
-     
-     if (nrow(pheno_fu) < 2) {
-       next  # Skip if fewer than 2 samples at this FU
-     }
-     
-     # Get omics data for these samples
-     omics_fu <- omics_values[, colnames(omics_values) %in% pheno_fu$SAMPLE_ID, drop = FALSE]
-     
-     # Get baseline data for these samples
-     baseline_col_idx_fu <- baseline_col_idx[fu_idx]
-     omics_baseline_fu <- omics_baseline_matrix[, baseline_col_idx_fu, drop = FALSE]
-     
-     # Compute change scores
-     analyte_change <- omics_fu - omics_baseline_fu
-     
-     # Build design matrix
-     design <- model.matrix(~ CONTROL_STATUS, data = pheno_fu)
-     
-     # Add covariates if provided
-     if (!is.null(additional_covariates)) {
-       for (cov in additional_covariates) {
-         if (cov %in% colnames(pheno_fu)) {
-           cov_vals <- pheno_fu[[cov]]
-           if (!all(is.na(cov_vals))) {
-             design <- cbind(design, pheno_fu[[cov]])
-             colnames(design)[ncol(design)] <- cov
-           }
+   # Compute change scores vectorized: analyte_change is (n_analytes × n_samples) matrix
+   analyte_change <- omics_values - omics_baseline_merged
+   
+    # Build design matrix for ALL samples with CONTROL_STATUS and FU interaction
+    # Implicit baseline adjustment via change scores; repeated measures via duplicateCorrelation
+    # Approximates LME4's (1|SUBJECT_ID) random intercept using LIMMA's block/correlation approach
+    pheno_merged$FU_factor <- factor(pheno_merged$FU)
+    design <- model.matrix(~ CONTROL_STATUS * FU_factor, data = pheno_merged)
+   
+   # Add additional covariates if provided
+   if (!is.null(additional_covariates)) {
+     for (cov in additional_covariates) {
+       if (cov %in% colnames(pheno_merged)) {
+         cov_vals <- pheno_merged[[cov]]
+         if (!all(is.na(cov_vals))) {
+           design <- cbind(design, cov_vals)
+           colnames(design)[ncol(design)] <- cov
          }
        }
      }
-     
-     # Add baseline analyte adjustment
-     baseline_vals_fu <- t(omics_baseline_fu)
-     colnames(baseline_vals_fu) <- paste0("baseline_", seq_len(nrow(analyte_change)))
-     # Note: limma expects analytes as rows, so we'll add baseline as covariate differently
-     # For now, include baseline effect in the model using contrasts
-     
-     tryCatch({
-       # Fit linear models using limma
-       fit <- lmFit(analyte_change, design)
-       fit <- eBayes(fit)
-       
-       # Extract coefficients for CONTROL_STATUS (treatment effect)
-       coef_idx <- which(colnames(design) == "CONTROL_STATUS")
-       
-       if (length(coef_idx) > 0) {
-         effect_sizes <- fit$coefficients[, coef_idx]
-         ses <- fit$stdev.unscaled[, coef_idx] * fit$sigma
-         p_values <- fit$p.value[, coef_idx]
-         
-         # Add to results
-         for (i in seq_along(effect_sizes)) {
-           results <- rbind(results, data.frame(
-             ANALYTE_NAME = omics_df$ANALYTE_NAME[i],
-             EFFECT_SIZE = effect_sizes[i],
-             SE = ses[i],
-             P_VALUE = p_values[i],
-             FU = fu_level,
-             stringsAsFactors = FALSE
-           ))
-         }
-       }
-       
-     }, error = function(e) {
-       warning("Error fitting limma model for FU level ", fu_level, ": ", e$message)
-     })
    }
    
-   # Return NULL if no results
-   if (nrow(results) == 0) {
+    tryCatch({
+      # Estimate within-subject correlation using duplicateCorrelation
+      # This approximates random intercept structure (matches LME4's (1|SUBJECT_ID))
+      cor <- duplicateCorrelation(analyte_change, design, block = pheno_merged$SUBJECT_ID)
+      
+      # Fit linear models for all analytes simultaneously using limma (vectorized)
+      # Pass block and correlation to account for repeated measures within subjects
+      fit <- lmFit(analyte_change, design, 
+                   block = pheno_merged$SUBJECT_ID, 
+                   correlation = cor$consensus.correlation)
+      fit <- eBayes(fit)
+     
+     # Initialize results data frame with pre-allocated capacity (avoid rbind in loop)
+     n_analytes <- nrow(analyte_change)
+     n_fu_levels <- length(fu_levels)
+     max_rows <- n_analytes * n_fu_levels
+     
+     results <- data.frame(
+       ANALYTE_NAME = character(max_rows),
+       EFFECT_SIZE = numeric(max_rows),
+       SE = numeric(max_rows),
+       P_VALUE = numeric(max_rows),
+       FU = integer(max_rows),
+       stringsAsFactors = FALSE
+     )
+     
+     row_idx <- 0
+     
+      # Extract results per FU level
+      # Each FU level gets its own direct coefficient from the model (no combining)
+      for (i in seq_along(fu_levels)) {
+        fu_level <- fu_levels[i]
+        
+        # Determine which coefficient to extract for this FU level
+        if (fu_level == fu_levels[1]) {
+          # First FU level: just CONTROL_STATUS coefficient
+          coef_name <- "CONTROL_STATUS"
+        } else {
+          # Subsequent FU levels: extract CONTROL_STATUS:FU_factor interaction directly
+          coef_name <- paste0("CONTROL_STATUS:FU_factor", fu_level)
+        }
+        
+        # Find coefficient index
+        coef_idx <- which(colnames(design) == coef_name)
+        
+        if (length(coef_idx) > 0) {
+          # Extract coefficients, SEs, and p-values (vectorized across analytes)
+          effect_sizes <- fit$coefficients[, coef_idx]
+          ses <- fit$stdev.unscaled[, coef_idx] * fit$sigma
+          p_values <- fit$p.value[, coef_idx]
+          
+          # Add to results (vectorized append)
+          for (j in seq_len(n_analytes)) {
+            row_idx <- row_idx + 1
+            results$ANALYTE_NAME[row_idx] <- omics_df$ANALYTE_NAME[j]
+            results$EFFECT_SIZE[row_idx] <- effect_sizes[j]
+            results$SE[row_idx] <- ses[j]
+            results$P_VALUE[row_idx] <- p_values[j]
+            results$FU[row_idx] <- fu_level
+          }
+        }
+      }
+     
+     # Trim results to actual rows used
+     results <- results[1:row_idx, ]
+     
+     # Return NULL if no results
+     if (nrow(results) == 0) {
+       return(NULL)
+     }
+     
+     return(results)
+     
+   }, error = function(e) {
+     warning("Error fitting limma model: ", e$message)
      return(NULL)
-   }
-   
-   return(results)
+   })
 }
 
 
