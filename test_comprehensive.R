@@ -201,17 +201,67 @@ for (name in names(checks_limma)) {
 }
 cat("\n")
 
+# ===== TEST 4: LIMMA WITH SINGLE FU (EDGE CASE) =====
+
+cat("TEST 4: Limma Analysis with Single FU (Edge Case)\n")
+cat("================================================\n\n")
+
+# Use LM pheno data (single FU: 0 and 1 only) with LIMMA
+pheno_limma_single <- pheno_lm
+
+cat("Running Limma Analysis with Single FU\n")
+results_limma_single <- FAST_omics_WAS(
+  pheno = pheno_limma_single,
+  omics = omics,
+  omics_type = "DNAm",
+  additional_covariates = additional_covariates
+)
+
+cat("Results (Limma with Single FU)\n")
+if (!is.null(results_limma_single$all$results)) {
+  res <- results_limma_single$all$results
+  cat("  Rows:     ", nrow(res), "\n")
+  cat("  Analytes: ", length(unique(res$ANALYTE_NAME)), "\n")
+  cat("  FU:       ", paste(sort(unique(res$FU)), collapse=", "), "\n")
+  cat("  Columns:  ", paste(colnames(res), collapse=", "), "\n\n")
+  
+  cat("Sample Results (first 5 rows)\n")
+  print(head(res, 5))
+  cat("\n")
+}
+
+cat("Validation Checks (Limma with Single FU)\n")
+checks_limma_single <- list(
+  "Results exist" = !is.null(results_limma_single$all$results),
+  "Has expected rows" = nrow(results_limma_single$all$results) > 0,
+  "FU level is 1" = all(results_limma_single$all$results$FU == 1),
+  "Has effect sizes" = all(!is.na(results_limma_single$all$results$EFFECT_SIZE)),
+  "Has SE values" = all(!is.na(results_limma_single$all$results$SE)),
+  "Has p-values" = all(!is.na(results_limma_single$all$results$P_VALUE)),
+  "Has BH correction" = "BH_P_VALUE" %in% colnames(results_limma_single$all$results),
+  "Sex stratification works" = !is.null(results_limma_single$male$results) && !is.null(results_limma_single$female$results)
+)
+
+limma_single_pass <- TRUE
+for (name in names(checks_limma_single)) {
+  status <- if (checks_limma_single[[name]]) "✓" else "✗"
+  cat(status, " ", name, "\n", sep="")
+  if (!checks_limma_single[[name]]) limma_single_pass <- FALSE
+}
+cat("\n")
+
 # ===== SUMMARY =====
 
 cat("Summary\n")
 cat("=======\n\n")
 
 cat("Test Results:\n")
-cat("  LM (Single FU):     ", if (lm_pass) "✓ PASS" else "✗ FAIL", "\n")
-cat("  LME4 (Multiple FU): ", if (lme4_pass) "✓ PASS" else "✗ FAIL", "\n")
-cat("  Limma (DNAm):       ", if (limma_pass) "✓ PASS" else "✗ FAIL", "\n\n")
+cat("  LM (Single FU):              ", if (lm_pass) "✓ PASS" else "✗ FAIL", "\n")
+cat("  LME4 (Multiple FU):          ", if (lme4_pass) "✓ PASS" else "✗ FAIL", "\n")
+cat("  Limma (DNAm, Multiple FU):   ", if (limma_pass) "✓ PASS" else "✗ FAIL", "\n")
+cat("  Limma (DNAm, Single FU):     ", if (limma_single_pass) "✓ PASS" else "✗ FAIL", "\n\n")
 
-if (lm_pass && lme4_pass && limma_pass) {
+if (lm_pass && lme4_pass && limma_pass && limma_single_pass) {
   cat("✓ ALL TESTS PASSED\n")
 } else {
   cat("✗ SOME TESTS FAILED\n")

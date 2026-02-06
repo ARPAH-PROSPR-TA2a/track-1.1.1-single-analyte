@@ -140,12 +140,12 @@
     model_data$analyte_baseline <- NA_real_
     
     # Build model formula
-    # analyte ~ CONTROL_STATUS + baseline_analyte + covariates
-    covariate_terms <- c("analyte_baseline")
-   if (!is.null(additional_covariates)) {
-     covariate_terms <- c(covariate_terms, additional_covariates)
-   }
-   
+    # analyte ~ CONTROL_STATUS + FEMALE + baseline_analyte + covariates
+    covariate_terms <- c("FEMALE", "analyte_baseline")
+    if (!is.null(additional_covariates)) {
+      covariate_terms <- c(covariate_terms, additional_covariates)
+    }
+    
     formula_str <- "analyte ~ CONTROL_STATUS"
     if (length(covariate_terms) > 0) {
       formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
@@ -272,19 +272,19 @@
    model_data$analyte <- NA_real_
    model_data$analyte_baseline <- NA_real_
    
-    # Build model formula
-    # analyte ~ CONTROL_STATUS * factor(FU) + baseline_analyte + covariates + (1|SUBJECT_ID)
-    # Extracts ALL fixed effect coefficients from the model
-    covariate_terms <- c("analyte_baseline")
-   if (!is.null(additional_covariates)) {
-     covariate_terms <- c(covariate_terms, additional_covariates)
-   }
-   
-    formula_str <- "analyte ~ CONTROL_STATUS * factor(FU)"
-    if (length(covariate_terms) > 0) {
-      formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
+     # Build model formula
+     # analyte ~ CONTROL_STATUS * factor(FU) + FEMALE + baseline_analyte + covariates + (1|SUBJECT_ID)
+     # Extracts ALL fixed effect coefficients from the model
+     covariate_terms <- c("FEMALE", "analyte_baseline")
+    if (!is.null(additional_covariates)) {
+      covariate_terms <- c(covariate_terms, additional_covariates)
     }
-    formula_str <- paste(formula_str, "+ (1|SUBJECT_ID)")
+    
+     formula_str <- "analyte ~ CONTROL_STATUS * factor(FU)"
+     if (length(covariate_terms) > 0) {
+       formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
+     }
+     formula_str <- paste(formula_str, "+ (1|SUBJECT_ID)")
     
     # Pre-compute loop invariants
     analyte_names <- omics_df$ANALYTE_NAME
@@ -364,7 +364,7 @@
 }
 
 
-.perform_limma_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL) {
+.perform_limma_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL, requires_mixed_effects) {
    
    # Limma analysis for DNAm (DNA methylation) data
    # Vectorized approach: fits all FU levels simultaneously for speed with high-dimensional data
@@ -399,102 +399,129 @@
    # Get baseline values as matrix (analytes × samples)
    omics_baseline_merged <- omics_baseline_matrix[, baseline_col_idx, drop = FALSE]
    
-   # Compute change scores vectorized: analyte_change is (n_analytes × n_samples) matrix
-   analyte_change <- omics_values - omics_baseline_merged
-   
-    # Build design matrix for ALL samples with all fixed effects
-    # Extracts ALL coefficients (treatment, time, covariates) for each analyte
-    # Implicit baseline adjustment via change scores; repeated measures via duplicateCorrelation
-    # Approximates LME4's (1|SUBJECT_ID) random intercept using LIMMA's block/correlation approach
-    pheno_merged$FU_factor <- factor(pheno_merged$FU)
-    design <- model.matrix(~ CONTROL_STATUS * FU_factor, data = pheno_merged)
-   
-   # Add additional covariates if provided
-   if (!is.null(additional_covariates)) {
-     for (cov in additional_covariates) {
-       if (cov %in% colnames(pheno_merged)) {
-         cov_vals <- pheno_merged[[cov]]
-         if (!all(is.na(cov_vals))) {
-           design <- cbind(design, cov_vals)
-           colnames(design)[ncol(design)] <- cov
-         }
-       }
-     }
-   }
-   
-    tryCatch({
-      # Estimate within-subject correlation using duplicateCorrelation
-      # This approximates random intercept structure (matches LME4's (1|SUBJECT_ID))
-      cor <- duplicateCorrelation(analyte_change, design, block = pheno_merged$SUBJECT_ID)
+    # Compute change scores vectorized: analyte_change is (n_analytes × n_samples) matrix
+    analyte_change <- omics_values - omics_baseline_merged
+    
+    # Build design matrix based on FU structure
+    if (requires_mixed_effects) {
+      # Multiple FU: include FU_factor and treatment × FU interaction
+      message("LIMMA: Multiple FU detected - using full model with FU effects")
       
-      # Fit linear models for all analytes simultaneously using limma (vectorized)
-      # Pass block and correlation to account for repeated measures within subjects
-      fit <- lmFit(analyte_change, design, 
-                   block = pheno_merged$SUBJECT_ID, 
-                   correlation = cor$consensus.correlation)
-      fit <- eBayes(fit)
-     
-      # Initialize results data frame with pre-allocated capacity (avoid rbind in loop)
-      # Note: number of rows = n_analytes * number_of_coefficients
-      n_analytes <- nrow(analyte_change)
-      n_coefficients <- ncol(design)  # One column per coefficient (including intercept, which we'll skip)
-      max_rows <- n_analytes * n_coefficients
+      pheno_merged$FU_factor <- factor(pheno_merged$FU)
+      design <- model.matrix(~ CONTROL_STATUS * FU_factor + FEMALE, data = pheno_merged)
       
-      results <- data.frame(
-        ANALYTE_NAME = character(max_rows),
-        COEFFICIENT = character(max_rows),
-        EFFECT_SIZE = numeric(max_rows),
-        SE = numeric(max_rows),
-        P_VALUE = numeric(max_rows),
-        stringsAsFactors = FALSE
-      )
-     
-     row_idx <- 0
-     
-      # Extract all fixed effect coefficients (except intercept)
-      coef_names <- colnames(design)
-      
-      for (coef_name in coef_names) {
-        # Skip intercept
-        if (coef_name == "(Intercept)") {
-          next
-        }
-        
-        # Find coefficient index in design matrix
-        coef_idx <- which(colnames(design) == coef_name)
-        
-        if (length(coef_idx) > 0) {
-          # Extract coefficients, SEs, and p-values (vectorized across analytes)
-          effect_sizes <- fit$coefficients[, coef_idx]
-          ses <- fit$stdev.unscaled[, coef_idx] * fit$sigma
-          p_values <- fit$p.value[, coef_idx]
-          
-          # Add to results (vectorized append)
-          for (j in seq_len(n_analytes)) {
-            row_idx <- row_idx + 1
-            results$ANALYTE_NAME[row_idx] <- omics_df$ANALYTE_NAME[j]
-            results$COEFFICIENT[row_idx] <- coef_name
-            results$EFFECT_SIZE[row_idx] <- effect_sizes[j]
-            results$SE[row_idx] <- ses[j]
-            results$P_VALUE[row_idx] <- p_values[j]
+      # Add additional covariates if provided
+      if (!is.null(additional_covariates)) {
+        for (cov in additional_covariates) {
+          if (cov %in% colnames(pheno_merged)) {
+            cov_vals <- pheno_merged[[cov]]
+            if (!all(is.na(cov_vals))) {
+              design <- cbind(design, cov_vals)
+              colnames(design)[ncol(design)] <- cov
+            }
           }
         }
       }
-     
-     # Trim results to actual rows used
-     results <- results[1:row_idx, ]
-     
-     # Return NULL if no results
-     if (nrow(results) == 0) {
-       return(NULL)
-     }
-     
-     return(results)
-     
-   }, error = function(e) {
-     warning("Error fitting limma model: ", e$message)
-     return(NULL)
-   })
+      
+      tryCatch({
+        # Estimate within-subject correlation using duplicateCorrelation
+        # This approximates random intercept structure (matches LME4's (1|SUBJECT_ID))
+        cor <- duplicateCorrelation(analyte_change, design, block = pheno_merged$SUBJECT_ID)
+        
+        # Fit linear models for all analytes simultaneously using limma (vectorized)
+        # Pass block and correlation to account for repeated measures within subjects
+        fit <- lmFit(analyte_change, design, 
+                     block = pheno_merged$SUBJECT_ID, 
+                     correlation = cor$consensus.correlation)
+        fit <- eBayes(fit)
+      }, error = function(e) {
+        stop("Error in LIMMA analysis (multiple FU): ", e$message)
+      })
+    } else {
+      # Single FU: simple model without FU_factor, no repeated measures
+      message("LIMMA: Single FU detected - using simple model without FU effects")
+      
+      design <- model.matrix(~ CONTROL_STATUS + FEMALE, data = pheno_merged)
+      
+      # Add additional covariates if provided
+      if (!is.null(additional_covariates)) {
+        for (cov in additional_covariates) {
+          if (cov %in% colnames(pheno_merged)) {
+            cov_vals <- pheno_merged[[cov]]
+            if (!all(is.na(cov_vals))) {
+              design <- cbind(design, cov_vals)
+              colnames(design)[ncol(design)] <- cov
+            }
+          }
+        }
+      }
+      
+       tryCatch({
+         # Single FU case: no repeated measures, no need for duplicateCorrelation
+         # Fit linear models for all analytes simultaneously using limma (vectorized)
+         fit <- lmFit(analyte_change, design)
+         fit <- eBayes(fit)
+       }, error = function(e) {
+         stop("Error in LIMMA analysis (single FU): ", e$message)
+       })
+    }
+    
+    # Initialize results data frame with pre-allocated capacity (avoid rbind in loop)
+    # Note: number of rows = n_analytes * number_of_coefficients
+    n_analytes <- nrow(analyte_change)
+    n_coefficients <- ncol(design)  # One column per coefficient (including intercept, which we'll skip)
+    max_rows <- n_analytes * n_coefficients
+    
+    results <- data.frame(
+      ANALYTE_NAME = character(max_rows),
+      COEFFICIENT = character(max_rows),
+      EFFECT_SIZE = numeric(max_rows),
+      SE = numeric(max_rows),
+      P_VALUE = numeric(max_rows),
+      stringsAsFactors = FALSE
+    )
+    
+    row_idx <- 0
+    
+    # Extract all fixed effect coefficients (except intercept)
+    coef_names <- colnames(design)
+    
+    for (coef_name in coef_names) {
+      # Skip intercept
+      if (coef_name == "(Intercept)") {
+        next
+      }
+      
+      # Find coefficient index in design matrix
+      coef_idx <- which(colnames(design) == coef_name)
+      
+      if (length(coef_idx) > 0) {
+        # Extract coefficients, SEs, and p-values (vectorized across analytes)
+        effect_sizes <- fit$coefficients[, coef_idx]
+        ses <- fit$stdev.unscaled[, coef_idx] * fit$sigma
+        p_values <- fit$p.value[, coef_idx]
+        
+        # Add to results (vectorized append)
+        for (j in seq_len(n_analytes)) {
+          row_idx <- row_idx + 1
+          results$ANALYTE_NAME[row_idx] <- omics_df$ANALYTE_NAME[j]
+          results$COEFFICIENT[row_idx] <- coef_name
+          results$EFFECT_SIZE[row_idx] <- effect_sizes[j]
+          results$SE[row_idx] <- ses[j]
+          results$P_VALUE[row_idx] <- p_values[j]
+        }
+      }
+    }
+    
+    # Trim results to actual rows used
+    results <- results[1:row_idx, ]
+    
+    # Return NULL if no results
+    if (nrow(results) == 0) {
+      return(NULL)
+    }
+    
+    return(results)
 }
 
 
@@ -511,8 +538,8 @@
   
   # STEP 2: Dispatch to appropriate analysis function
   if (omics_type == "DNAm") {
-    # Limma handles all FU logic internally
-    results <- .perform_limma_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates)
+    # Limma handles both single and multiple FU cases
+    results <- .perform_limma_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates, mixed_effects)
   } else {
     # Proteomics/Metabolomics - check if LM or LME4
     max_fu <- max(pheno_analysis$FU, na.rm = TRUE)
