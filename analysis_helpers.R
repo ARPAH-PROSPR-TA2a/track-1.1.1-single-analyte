@@ -200,11 +200,6 @@
         
         # Loop through all coefficients
         for (coef_name in rownames(coef_table)) {
-          # Skip intercept
-          if (coef_name == "(Intercept)") {
-            next
-          }
-          
           # Extract coefficient info
           effect_size <- coef_table[coef_name, "Estimate"]
           se <- coef_table[coef_name, "Std. Error"]
@@ -327,13 +322,9 @@
         n_fixed_effects <- nrow(coef_table)
         df_approx <- nrow(model_data) - n_fixed_effects
         
-        # Extract all fixed effect coefficients (except intercept)
+        # Extract all fixed effect coefficients
         for (coef_name in rownames(coef_table)) {
-          # Skip intercept
-          if (coef_name == "(Intercept)") {
-            next
-          }
-          
+          # Extract coefficient info
           effect_size <- coef_table[coef_name, "Estimate"]
           se <- coef_table[coef_name, "Std. Error"]
           t_stat <- coef_table[coef_name, "t value"]
@@ -404,67 +395,39 @@
     
     # Build design matrix based on FU structure
     if (requires_mixed_effects) {
-      # Multiple FU: include FU_factor and treatment × FU interaction
-      message("LIMMA: Multiple FU detected - using full model with FU effects")
-      
+      message("LIMMA: Multiple FU - using full model with FU effects")
       pheno_merged$FU_factor <- factor(pheno_merged$FU)
       design <- model.matrix(~ CONTROL_STATUS * FU_factor + FEMALE, data = pheno_merged)
-      
-      # Add additional covariates if provided
-      if (!is.null(additional_covariates)) {
-        for (cov in additional_covariates) {
-          if (cov %in% colnames(pheno_merged)) {
-            cov_vals <- pheno_merged[[cov]]
-            if (!all(is.na(cov_vals))) {
-              design <- cbind(design, cov_vals)
-              colnames(design)[ncol(design)] <- cov
-            }
-          }
-        }
-      }
-      
-      tryCatch({
-        # Estimate within-subject correlation using duplicateCorrelation
-        # This approximates random intercept structure (matches LME4's (1|SUBJECT_ID))
-        cor <- duplicateCorrelation(analyte_change, design, block = pheno_merged$SUBJECT_ID)
-        
-        # Fit linear models for all analytes simultaneously using limma (vectorized)
-        # Pass block and correlation to account for repeated measures within subjects
-        fit <- lmFit(analyte_change, design, 
-                     block = pheno_merged$SUBJECT_ID, 
-                     correlation = cor$consensus.correlation)
-        fit <- eBayes(fit)
-      }, error = function(e) {
-        stop("Error in LIMMA analysis (multiple FU): ", e$message)
-      })
     } else {
-      # Single FU: simple model without FU_factor, no repeated measures
-      message("LIMMA: Single FU detected - using simple model without FU effects")
-      
+      message("LIMMA: Single FU - using simple model without FU effects")
       design <- model.matrix(~ CONTROL_STATUS + FEMALE, data = pheno_merged)
-      
-      # Add additional covariates if provided
-      if (!is.null(additional_covariates)) {
-        for (cov in additional_covariates) {
-          if (cov %in% colnames(pheno_merged)) {
-            cov_vals <- pheno_merged[[cov]]
-            if (!all(is.na(cov_vals))) {
-              design <- cbind(design, cov_vals)
-              colnames(design)[ncol(design)] <- cov
-            }
+    }
+    
+    # Add additional covariates if provided
+    if (!is.null(additional_covariates)) {
+      for (cov in additional_covariates) {
+        if (cov %in% colnames(pheno_merged)) {
+          cov_vals <- pheno_merged[[cov]]
+          if (!all(is.na(cov_vals))) {
+            design <- cbind(design, cov_vals)
+            colnames(design)[ncol(design)] <- cov
           }
         }
       }
-      
-       tryCatch({
-         # Single FU case: no repeated measures, no need for duplicateCorrelation
-         # Fit linear models for all analytes simultaneously using limma (vectorized)
-         fit <- lmFit(analyte_change, design)
-         fit <- eBayes(fit)
-       }, error = function(e) {
-         stop("Error in LIMMA analysis (single FU): ", e$message)
-       })
     }
+    
+    # Fit model based on FU structure
+    if (requires_mixed_effects) {
+      # Multiple FU: estimate within-subject correlation
+      cor <- duplicateCorrelation(analyte_change, design, block = pheno_merged$SUBJECT_ID)
+      fit <- lmFit(analyte_change, design, 
+                   block = pheno_merged$SUBJECT_ID, 
+                   correlation = cor$consensus.correlation)
+    } else {
+      # Single FU: no repeated measures, no correlation estimation needed
+      fit <- lmFit(analyte_change, design)
+    }
+    fit <- eBayes(fit)
     
     # Initialize results data frame with pre-allocated capacity (avoid rbind in loop)
     # Note: number of rows = n_analytes * number_of_coefficients
@@ -487,11 +450,6 @@
     coef_names <- colnames(design)
     
     for (coef_name in coef_names) {
-      # Skip intercept
-      if (coef_name == "(Intercept)") {
-        next
-      }
-      
       # Find coefficient index in design matrix
       coef_idx <- which(colnames(design) == coef_name)
       

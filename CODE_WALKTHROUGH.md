@@ -2,11 +2,11 @@
 
 ## Table of Contents
 
-1. [Entry Point & Function Signature](#entry-point--function-signature)
+1. [Main Function](#main-function)
 2. [Input Acceptance: What Data is Required](#input-acceptance-what-data-is-required)
 3. [Input Validation: What is Enforced](#input-validation-what-is-enforced)
-4. [Data Preparation](#data-preparation)
-5. [Reporting Pipeline: QC and Summary Reports](#reporting-pipeline-qc-and-summary-reports)
+4. [Reporting Pipeline: QC and Summary Reports](#reporting-pipeline-qc-and-summary-reports)
+5. [Data Preparation](#data-preparation)
 6. [Analysis Method Selection](#analysis-method-selection)
 7. [Analysis Method 1: Linear Regression (LM)](#analysis-method-1-linear-regression-lm)
 8. [Analysis Method 2: Linear Mixed Effects (LME4)](#analysis-method-2-linear-mixed-effects-lme4)
@@ -17,7 +17,7 @@
 
 ---
 
-## Entry Point & Function Signature
+## Main Function
 
 **File**: `main.R`
 
@@ -31,7 +31,7 @@ FAST_omics_WAS <- function(pheno,
 ### Function Parameters
 
 | Parameter | Type | Required? | Description |
-|-----------|------|-----------|-------------|
+|:---|:---:|:---:|:---|
 | `pheno` | data.frame | YES | Phenotype data with subject/sample info, treatment status, covariates |
 | `omics` | data.frame | YES | Omics measurements (analytes × samples) |
 | `omics_type` | character | NO | Type of omics data: "Proteomics" (default), "Metabolomics", or "DNAm" |
@@ -60,7 +60,7 @@ list(
 The `pheno` data.frame must contain these columns:
 
 | Column | Type | Notes |
-|--------|------|-------|
+|:---|:---:|:---|
 | SAMPLE_ID | character | Unique identifier for each measurement occasion |
 | SUBJECT_ID | character | Subject/participant identifier (repeated across FU levels) |
 | FU | numeric | Follow-up timepoint: 0 (baseline), 1, 2, ... |
@@ -82,7 +82,7 @@ sample_004     subj_002    1   0               0       62     64
 The `omics` data.frame must contain:
 
 | Column | Type | Notes |
-|--------|------|-------|
+|:---|:---:|:---|
 | ANALYTE_NAME | character | Unique identifier for each feature (gene, protein, metabolite, CpG site) |
 | *Sample IDs* | numeric | One column per sample, named exactly as in pheno$SAMPLE_ID |
 
@@ -113,7 +113,8 @@ Checks:
 - FU >= 0, CONTROL_STATUS in {0, 1}, FEMALE in {0, 1}
 - SAMPLE_ID values are unique
 - No duplicate SUBJECT_ID/FU pairs
-- Sex stratification: creates all/male/female groups (both genders must be present)
+
+Sex stratification: creates all/male/female groups (not performed if only one sex is present)
 
 **Returns**: List with `pheno$all`, `pheno$male`, `pheno$female`, plus `pheno$requires_mixed_effects` (TRUE if max FU > 1)
 
@@ -127,17 +128,9 @@ Checks:
 - Issues warnings for analytes with NA values
 - Issues warnings for analytes with near-zero variance
 
+Sex stratification: creates all/male/female groups (not performed if only one sex is present)
+
 **Returns**: List with `omics$all`, `omics$male`, `omics$female` (each with only shared samples)
-
----
-
-## Data Preparation
-
-After validation, data is prepared for analysis in `main.R`.
-
-**Baseline Separation**
-
-Baseline (FU=0) phenotype samples are separated and their omics values are extracted for use as adjustment covariates. The analysis dataset uses only follow-up measurements (FU > 0).
 
 ---
 
@@ -153,11 +146,11 @@ Reports: Total samples, samples per FU level, number of subjects, treatment grou
 
 **Omics Summary Report**
 
-For each analyte: number of non-missing values, mean, median, standard deviation, and value range (min/max)"
+For each analyte: number of non-missing values, mean, median, standard deviation, and value range (min/max)
 
 **Covariate Summary Report**
 
-For each additional covariate: data type, N missing, summary statistics (mean/SD/range for numeric; unique values for character)
+For each additional covariate: data type, N missing, summary statistics (mean/SD/range for numeric; unique values for factor/logical)
 
 **Randomization/Baseline Balance Report**
 
@@ -166,6 +159,16 @@ For each analyte at baseline (FU=0 only):
 - Performs Welch's t-test comparing CONTROL_STATUS groups
 - Records: mean difference, Cohen's d, SE, p-value
 - Applies Benjamini-Hochberg FDR correction
+
+---
+
+## Data Preparation
+
+After validation, data is prepared for analysis in `main.R`.
+
+**Baseline Separation**
+
+Baseline (FU=0) phenotype samples are separated and their omics values are extracted for use as adjustment covariates. The analysis dataset uses only follow-up measurements (FU > 0).
 
 ---
 
@@ -210,7 +213,7 @@ Per-analyte loop:
 2. Get FU values
 3. Compute change score
 4. Fit: `lm(analyte ~ CONTROL_STATUS + analyte_baseline + covariates, data = model_data)`
-5. Extract all fixed effect coefficients (skip intercept)
+5. Extract all fixed effect coefficients (including intercept)
 
 ---
 
@@ -267,10 +270,13 @@ P-values computed from t-statistics using approximate degrees of freedom (lmer w
 **When Used**:
 
 - Omics type: DNAm (DNA methylation)
-- Follow-up structure: Multiple FU (max FU > 1)
+- Follow-up structure: Any (single or multiple FU)
 
 ### Model Specification
 
+LIMMA adapts its model based on follow-up structure:
+
+**Multiple FU (max FU > 1)**:
 ```
 CHANGE ~ CONTROL_STATUS * factor(FU) + additional_covariates
 ```
@@ -283,6 +289,19 @@ fit <- lmFit(analyte_change, design,
              correlation = cor$consensus.correlation)
 fit <- eBayes(fit)
 ```
+
+**Single FU (max FU = 1)**:
+```
+CHANGE ~ CONTROL_STATUS + additional_covariates
+```
+
+Without repeated measures (no duplicateCorrelation):
+```r
+fit <- lmFit(analyte_change, design)
+fit <- eBayes(fit)
+```
+
+This adaptive approach ensures LIMMA works correctly whether data has repeated measurements or not.
 
 ### Implementation
 
@@ -379,16 +398,18 @@ Sorted by ANALYTE_NAME (primary), then COEFFICIENT (secondary).
 
 ### Column Definitions
 
-| Column | Definition |
-|--------|-----------|
-| ANALYTE_NAME | Feature name |
-| COEFFICIENT | Regression coefficient name |
-| EFFECT_SIZE | Estimated regression coefficient |
-| SE | Standard error |
-| P_VALUE | Two-tailed p-value (unadjusted) |
-| BH_P_VALUE | Benjamini-Hochberg FDR-adjusted p-value |
+- **ANALYTE_NAME**: Feature name
+- **COEFFICIENT**: Regression coefficient name
+- **EFFECT_SIZE**: Estimated regression coefficient
+- **SE**: Standard error
+- **P_VALUE**: Two-tailed p-value (unadjusted)
+- **BH_P_VALUE**: Benjamini-Hochberg FDR-adjusted p-value
 
 ### Coefficient Types Reported
+
+**Intercept**:
+
+- `(Intercept)`: Model intercept (predicted value when all covariates = 0)
 
 **Treatment effects**:
 

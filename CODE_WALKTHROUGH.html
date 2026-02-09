@@ -357,8 +357,7 @@ display: none;
 <div id="table-of-contents" class="section level2">
 <h2>Table of Contents</h2>
 <ol style="list-style-type: decimal">
-<li><a href="#entry-point--function-signature">Entry Point &amp;
-Function Signature</a></li>
+<li><a href="#main-function">Main Function</a></li>
 <li><a href="#input-acceptance-what-data-is-required">Input Acceptance:
 What Data is Required</a></li>
 <li><a href="#input-validation-what-is-enforced">Input Validation: What
@@ -382,8 +381,8 @@ All, Male, Female</a></li>
 </ol>
 <hr />
 </div>
-<div id="entry-point-function-signature" class="section level2">
-<h2>Entry Point &amp; Function Signature</h2>
+<div id="main-function" class="section level2">
+<h2>Main Function</h2>
 <p><strong>File</strong>: <code>main.R</code></p>
 <pre class="r"><code>FAST_omics_WAS &lt;- function(pheno, 
                            omics, 
@@ -393,45 +392,46 @@ All, Male, Female</a></li>
 <h3>Function Parameters</h3>
 <table>
 <colgroup>
-<col width="26%" />
-<col width="14%" />
-<col width="26%" />
-<col width="31%" />
+<col width="22%" />
+<col width="27%" />
+<col width="27%" />
+<col width="22%" />
 </colgroup>
 <thead>
 <tr class="header">
-<th>Parameter</th>
-<th>Type</th>
-<th>Required?</th>
-<th>Description</th>
+<th align="left">Parameter</th>
+<th align="center">Type</th>
+<th align="center">Required?</th>
+<th align="left">Description</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td><code>pheno</code></td>
-<td>data.frame</td>
-<td>YES</td>
-<td>Phenotype data with subject/sample info, treatment status,
-covariates</td>
+<td align="left"><code>pheno</code></td>
+<td align="center">data.frame</td>
+<td align="center">YES</td>
+<td align="left">Phenotype data with subject/sample info, treatment
+status, covariates</td>
 </tr>
 <tr class="even">
-<td><code>omics</code></td>
-<td>data.frame</td>
-<td>YES</td>
-<td>Omics measurements (analytes × samples)</td>
+<td align="left"><code>omics</code></td>
+<td align="center">data.frame</td>
+<td align="center">YES</td>
+<td align="left">Omics measurements (analytes × samples)</td>
 </tr>
 <tr class="odd">
-<td><code>omics_type</code></td>
-<td>character</td>
-<td>NO</td>
-<td>Type of omics data: “Proteomics” (default), “Metabolomics”, or
-“DNAm”</td>
+<td align="left"><code>omics_type</code></td>
+<td align="center">character</td>
+<td align="center">NO</td>
+<td align="left">Type of omics data: “Proteomics” (default),
+“Metabolomics”, or “DNAm”</td>
 </tr>
 <tr class="even">
-<td><code>additional_covariates</code></td>
-<td>character vector</td>
-<td>NO</td>
-<td>Names of columns in pheno to use as additional covariates</td>
+<td align="left"><code>additional_covariates</code></td>
+<td align="center">character vector</td>
+<td align="center">NO</td>
+<td align="left">Names of columns in pheno to use as additional
+covariates</td>
 </tr>
 </tbody>
 </table>
@@ -456,47 +456,48 @@ covariates</td>
 <p>The <code>pheno</code> data.frame must contain these columns:</p>
 <table>
 <colgroup>
+<col width="30%" />
 <col width="38%" />
-<col width="28%" />
-<col width="33%" />
+<col width="30%" />
 </colgroup>
 <thead>
 <tr class="header">
-<th>Column</th>
-<th>Type</th>
-<th>Notes</th>
+<th align="left">Column</th>
+<th align="center">Type</th>
+<th align="left">Notes</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td>SAMPLE_ID</td>
-<td>character</td>
-<td>Unique identifier for each measurement occasion</td>
+<td align="left">SAMPLE_ID</td>
+<td align="center">character</td>
+<td align="left">Unique identifier for each measurement occasion</td>
 </tr>
 <tr class="even">
-<td>SUBJECT_ID</td>
-<td>character</td>
-<td>Subject/participant identifier (repeated across FU levels)</td>
+<td align="left">SUBJECT_ID</td>
+<td align="center">character</td>
+<td align="left">Subject/participant identifier (repeated across FU
+levels)</td>
 </tr>
 <tr class="odd">
-<td>FU</td>
-<td>numeric</td>
-<td>Follow-up timepoint: 0 (baseline), 1, 2, …</td>
+<td align="left">FU</td>
+<td align="center">numeric</td>
+<td align="left">Follow-up timepoint: 0 (baseline), 1, 2, …</td>
 </tr>
 <tr class="even">
-<td>CONTROL_STATUS</td>
-<td>numeric</td>
-<td>Treatment group: 0 (control), 1 (treatment)</td>
+<td align="left">CONTROL_STATUS</td>
+<td align="center">numeric</td>
+<td align="left">Treatment group: 0 (control), 1 (treatment)</td>
 </tr>
 <tr class="odd">
-<td>FEMALE</td>
-<td>numeric</td>
-<td>Sex: 0 (male), 1 (female)</td>
+<td align="left">FEMALE</td>
+<td align="center">numeric</td>
+<td align="left">Sex: 0 (male), 1 (female)</td>
 </tr>
 <tr class="even">
-<td><em>Any additional covariates specified</em></td>
-<td>numeric/factor/logical</td>
-<td>Additional variables to adjust for</td>
+<td align="left"><em>Any additional covariates specified</em></td>
+<td align="center">numeric/factor/logical</td>
+<td align="left">Additional variables to adjust for</td>
 </tr>
 </tbody>
 </table>
@@ -512,28 +513,29 @@ sample_004     subj_002    1   0               0       62     64</code></pre>
 <p>The <code>omics</code> data.frame must contain:</p>
 <table>
 <colgroup>
+<col width="30%" />
 <col width="38%" />
-<col width="28%" />
-<col width="33%" />
+<col width="30%" />
 </colgroup>
 <thead>
 <tr class="header">
-<th>Column</th>
-<th>Type</th>
-<th>Notes</th>
+<th align="left">Column</th>
+<th align="center">Type</th>
+<th align="left">Notes</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td>ANALYTE_NAME</td>
-<td>character</td>
-<td>Unique identifier for each feature (gene, protein, metabolite, CpG
-site)</td>
+<td align="left">ANALYTE_NAME</td>
+<td align="center">character</td>
+<td align="left">Unique identifier for each feature (gene, protein,
+metabolite, CpG site)</td>
 </tr>
 <tr class="even">
-<td><em>Sample IDs</em></td>
-<td>numeric</td>
-<td>One column per sample, named exactly as in pheno$SAMPLE_ID</td>
+<td align="left"><em>Sample IDs</em></td>
+<td align="center">numeric</td>
+<td align="left">One column per sample, named exactly as in
+pheno$SAMPLE_ID</td>
 </tr>
 </tbody>
 </table>
@@ -560,9 +562,9 @@ FEMALE, and any <code>additional_covariates</code></li>
 <li>FU &gt;= 0, CONTROL_STATUS in {0, 1}, FEMALE in {0, 1}</li>
 <li>SAMPLE_ID values are unique</li>
 <li>No duplicate SUBJECT_ID/FU pairs</li>
-<li>Sex stratification: creates all/male/female groups (both genders
-must be present)</li>
 </ul>
+<p>Sex stratification: creates all/male/female groups (not performed if
+only one sex is present)</p>
 <p><strong>Returns</strong>: List with <code>pheno$all</code>,
 <code>pheno$male</code>, <code>pheno$female</code>, plus
 <code>pheno$requires_mixed_effects</code> (TRUE if max FU &gt; 1)</p>
@@ -703,10 +705,12 @@ p-values).</p>
 <p><strong>When Used</strong>:</p>
 <ul>
 <li>Omics type: DNAm (DNA methylation)</li>
-<li>Follow-up structure: Multiple FU (max FU &gt; 1)</li>
+<li>Follow-up structure: Any (single or multiple FU)</li>
 </ul>
 <div id="model-specification-2" class="section level3">
 <h3>Model Specification</h3>
+<p>LIMMA adapts its model based on follow-up structure:</p>
+<p><strong>Multiple FU (max FU &gt; 1)</strong>:</p>
 <pre><code>CHANGE ~ CONTROL_STATUS * factor(FU) + additional_covariates</code></pre>
 <p>With repeated measures handled via:</p>
 <pre class="r"><code>cor &lt;- duplicateCorrelation(analyte_change, design, block = SUBJECT_ID)
@@ -714,6 +718,13 @@ fit &lt;- lmFit(analyte_change, design,
              block = SUBJECT_ID, 
              correlation = cor$consensus.correlation)
 fit &lt;- eBayes(fit)</code></pre>
+<p><strong>Single FU (max FU = 1)</strong>:</p>
+<pre><code>CHANGE ~ CONTROL_STATUS + additional_covariates</code></pre>
+<p>Without repeated measures (no duplicateCorrelation):</p>
+<pre class="r"><code>fit &lt;- lmFit(analyte_change, design)
+fit &lt;- eBayes(fit)</code></pre>
+<p>This adaptive approach ensures LIMMA works correctly whether data has
+repeated measurements or not.</p>
 </div>
 <div id="implementation-2" class="section level3">
 <h3>Implementation</h3>
@@ -793,40 +804,15 @@ cg00000103      analyte_baseline        -0.7285            0.0535      1.2e-34  
 </div>
 <div id="column-definitions" class="section level3">
 <h3>Column Definitions</h3>
-<table>
-<thead>
-<tr class="header">
-<th>Column</th>
-<th>Definition</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td>ANALYTE_NAME</td>
-<td>Feature name</td>
-</tr>
-<tr class="even">
-<td>COEFFICIENT</td>
-<td>Regression coefficient name</td>
-</tr>
-<tr class="odd">
-<td>EFFECT_SIZE</td>
-<td>Estimated regression coefficient</td>
-</tr>
-<tr class="even">
-<td>SE</td>
-<td>Standard error</td>
-</tr>
-<tr class="odd">
-<td>P_VALUE</td>
-<td>Two-tailed p-value (unadjusted)</td>
-</tr>
-<tr class="even">
-<td>BH_P_VALUE</td>
-<td>Benjamini-Hochberg FDR-adjusted p-value</td>
-</tr>
-</tbody>
-</table>
+<ul>
+<li><strong>ANALYTE_NAME</strong>: Feature name</li>
+<li><strong>COEFFICIENT</strong>: Regression coefficient name</li>
+<li><strong>EFFECT_SIZE</strong>: Estimated regression coefficient</li>
+<li><strong>SE</strong>: Standard error</li>
+<li><strong>P_VALUE</strong>: Two-tailed p-value (unadjusted)</li>
+<li><strong>BH_P_VALUE</strong>: Benjamini-Hochberg FDR-adjusted
+p-value</li>
+</ul>
 </div>
 <div id="coefficient-types-reported" class="section level3">
 <h3>Coefficient Types Reported</h3>
