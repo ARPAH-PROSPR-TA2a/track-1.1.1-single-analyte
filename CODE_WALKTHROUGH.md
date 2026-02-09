@@ -279,7 +279,7 @@ LIMMA adapts its model based on follow-up structure:
 
 **Multiple FU (max FU > 1)**:
 ```
-CHANGE ~ CONTROL_STATUS * factor(FU) + additional_covariates
+CHANGE ~ CONTROL_STATUS * factor(FU) + FEMALE + additional_covariates
 ```
 
 With repeated measures handled via:
@@ -293,7 +293,7 @@ fit <- eBayes(fit)
 
 **Single FU (max FU = 1)**:
 ```
-CHANGE ~ CONTROL_STATUS + additional_covariates
+CHANGE ~ CONTROL_STATUS + FEMALE + additional_covariates
 ```
 
 Without repeated measures (no duplicateCorrelation):
@@ -305,63 +305,6 @@ fit <- eBayes(fit)
 This adaptive approach ensures LIMMA works correctly whether data has repeated measurements or not.
 
 **Note on `analyte_baseline`**: LIMMA does not include `analyte_baseline` as a covariate. With massive DNAm datasets, LIMMA's vectorized approach requires a single design matrix for all analytes, which precludes per-analyte baseline adjustments like those in LM/LME4.
-
-### Implementation
-
-**Vectorized change score computation**:
-
-```r
-# Pre-compute baseline indices
-baseline_idx <- match(pheno_merged$SUBJECT_ID, baseline_subject_ids)
-baseline_col_idx <- match(pheno_baseline$SAMPLE_ID[baseline_idx], 
-                          colnames(omics_baseline_matrix))
-
-# Get baseline values as matrix (n_analytes × n_samples)
-omics_baseline_merged <- omics_baseline_matrix[, baseline_col_idx, drop = FALSE]
-
-# Compute all change scores at once (matrix subtraction)
-analyte_change <- omics_values - omics_baseline_merged
-```
-
-**Vectorized model fitting**:
-
-```r
-# Estimate within-subject correlation (one value across all analytes)
-cor <- duplicateCorrelation(analyte_change, design, block = pheno_merged$SUBJECT_ID)
-
-# Fit all analytes at once
-fit <- lmFit(analyte_change, design, 
-             block = pheno_merged$SUBJECT_ID, 
-             correlation = cor$consensus.correlation)
-
-# Apply empirical Bayes moderation
-fit <- eBayes(fit)
-```
-
-**Coefficient extraction**:
-
-```r
-for (coef_name in colnames(design)) {
-  if (coef_name == "(Intercept)") next
-  
-  coef_idx <- which(colnames(design) == coef_name)
-  
-  # Extract across all analytes at once
-  effect_sizes <- fit$coefficients[, coef_idx]
-  ses <- fit$stdev.unscaled[, coef_idx] * fit$sigma
-  p_values <- fit$p.value[, coef_idx]
-  
-  # Append to results
-  for (j in seq_len(n_analytes)) {
-    results$ANALYTE_NAME[row_idx] <- omics_df$ANALYTE_NAME[j]
-    results$COEFFICIENT[row_idx] <- coef_name
-    results$EFFECT_SIZE[row_idx] <- effect_sizes[j]
-    results$SE[row_idx] <- ses[j]
-    results$P_VALUE[row_idx] <- p_values[j]
-    row_idx <- row_idx + 1
-  }
-}
-```
 
 ---
 

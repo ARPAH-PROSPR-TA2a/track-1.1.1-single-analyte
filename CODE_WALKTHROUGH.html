@@ -376,8 +376,6 @@ Method 3: Empirical Bayes Moderation (LIMMA)</a></li>
 <li><a href="#multiple-testing-correction">Multiple Testing
 Correction</a></li>
 <li><a href="#results-output">Results Output</a></li>
-<li><a href="#stratified-analysis-all-male-female">Stratified Analysis:
-All, Male, Female</a></li>
 </ol>
 <hr />
 </div>
@@ -446,6 +444,11 @@ covariates</td>
   covariates_summary = covariates_report,  # Covariate distributions
   randomization_summary = randomization_report  # Baseline balance check
 )</code></pre>
+<p><strong>Stratification</strong>: The pipeline runs three times — once
+on all participants, once on males only (FEMALE == 0), and once on
+females only (FEMALE == 1). Male and female subsets are only created if
+both genders are present in the input data; if only one gender exists,
+the corresponding elements (male or female) will be NULL.</p>
 <hr />
 </div>
 </div>
@@ -714,7 +717,7 @@ p-values).</p>
 <h3>Model Specification</h3>
 <p>LIMMA adapts its model based on follow-up structure:</p>
 <p><strong>Multiple FU (max FU &gt; 1)</strong>:</p>
-<pre><code>CHANGE ~ CONTROL_STATUS * factor(FU) + additional_covariates</code></pre>
+<pre><code>CHANGE ~ CONTROL_STATUS * factor(FU) + FEMALE + additional_covariates</code></pre>
 <p>With repeated measures handled via:</p>
 <pre class="r"><code>cor &lt;- duplicateCorrelation(analyte_change, design, block = SUBJECT_ID)
 fit &lt;- lmFit(analyte_change, design, 
@@ -722,7 +725,7 @@ fit &lt;- lmFit(analyte_change, design,
              correlation = cor$consensus.correlation)
 fit &lt;- eBayes(fit)</code></pre>
 <p><strong>Single FU (max FU = 1)</strong>:</p>
-<pre><code>CHANGE ~ CONTROL_STATUS + additional_covariates</code></pre>
+<pre><code>CHANGE ~ CONTROL_STATUS + FEMALE + additional_covariates</code></pre>
 <p>Without repeated measures (no duplicateCorrelation):</p>
 <pre class="r"><code>fit &lt;- lmFit(analyte_change, design)
 fit &lt;- eBayes(fit)</code></pre>
@@ -733,52 +736,6 @@ not include <code>analyte_baseline</code> as a covariate. With massive
 DNAm datasets, LIMMA’s vectorized approach requires a single design
 matrix for all analytes, which precludes per-analyte baseline
 adjustments like those in LM/LME4.</p>
-</div>
-<div id="implementation-2" class="section level3">
-<h3>Implementation</h3>
-<p><strong>Vectorized change score computation</strong>:</p>
-<pre class="r"><code># Pre-compute baseline indices
-baseline_idx &lt;- match(pheno_merged$SUBJECT_ID, baseline_subject_ids)
-baseline_col_idx &lt;- match(pheno_baseline$SAMPLE_ID[baseline_idx], 
-                          colnames(omics_baseline_matrix))
-
-# Get baseline values as matrix (n_analytes × n_samples)
-omics_baseline_merged &lt;- omics_baseline_matrix[, baseline_col_idx, drop = FALSE]
-
-# Compute all change scores at once (matrix subtraction)
-analyte_change &lt;- omics_values - omics_baseline_merged</code></pre>
-<p><strong>Vectorized model fitting</strong>:</p>
-<pre class="r"><code># Estimate within-subject correlation (one value across all analytes)
-cor &lt;- duplicateCorrelation(analyte_change, design, block = pheno_merged$SUBJECT_ID)
-
-# Fit all analytes at once
-fit &lt;- lmFit(analyte_change, design, 
-             block = pheno_merged$SUBJECT_ID, 
-             correlation = cor$consensus.correlation)
-
-# Apply empirical Bayes moderation
-fit &lt;- eBayes(fit)</code></pre>
-<p><strong>Coefficient extraction</strong>:</p>
-<pre class="r"><code>for (coef_name in colnames(design)) {
-  if (coef_name == &quot;(Intercept)&quot;) next
-  
-  coef_idx &lt;- which(colnames(design) == coef_name)
-  
-  # Extract across all analytes at once
-  effect_sizes &lt;- fit$coefficients[, coef_idx]
-  ses &lt;- fit$stdev.unscaled[, coef_idx] * fit$sigma
-  p_values &lt;- fit$p.value[, coef_idx]
-  
-  # Append to results
-  for (j in seq_len(n_analytes)) {
-    results$ANALYTE_NAME[row_idx] &lt;- omics_df$ANALYTE_NAME[j]
-    results$COEFFICIENT[row_idx] &lt;- coef_name
-    results$EFFECT_SIZE[row_idx] &lt;- effect_sizes[j]
-    results$SE[row_idx] &lt;- ses[j]
-    results$P_VALUE[row_idx] &lt;- p_values[j]
-    row_idx &lt;- row_idx + 1
-  }
-}</code></pre>
 <hr />
 </div>
 </div>
@@ -821,30 +778,7 @@ cg00000103      analyte_baseline        -0.7285            0.0535      1.2e-34  
 <li><strong>BH_P_VALUE</strong>: Benjamini-Hochberg FDR-adjusted
 p-value</li>
 </ul>
-<hr />
 </div>
-</div>
-<div id="stratified-analysis-all-male-female" class="section level2">
-<h2>Stratified Analysis: All, Male, Female</h2>
-<p><strong>File</strong>: <code>main.R</code></p>
-<p>The entire pipeline runs three times: 1. All participants 2. Males
-only (if N &gt;= 20) 3. Females only (if N &gt;= 20)</p>
-<pre class="r"><code>for (dataset in c(&quot;all&quot;, &quot;male&quot;, &quot;female&quot;)) {
-  if (is.null(pheno_list[[dataset]])) {
-    next  # Skip if N &lt; 20 or no data
-  }
-  
-  # Run validation, reporting, and analysis for this dataset
-  outputs[[dataset]] &lt;- list(
-    results = analysis_results,
-    omics_summary = omics_report,
-    pheno_summary = pheno_report,
-    covariates_summary = covariates_report,
-    randomization_summary = randomization_report
-  )
-}</code></pre>
-<p>Each stratified analysis is completely independent with its own
-results, reports, and quality control checks.</p>
 </div>
 </div>
 
