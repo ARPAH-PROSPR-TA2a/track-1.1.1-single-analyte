@@ -213,7 +213,7 @@ Per-analyte loop:
 1. Get baseline values for analyte
 2. Get FU values
 3. Compute change score
-4. Fit: `lm(analyte ~ CONTROL_STATUS + analyte_baseline + covariates, data = model_data)`
+4. Fit model
 5. Extract all fixed effect coefficients (including intercept)
 
 ---
@@ -249,7 +249,7 @@ Per-analyte loop:
 2. Get baseline and FU values
 3. Compute change score
 4. Fill data template
-5. Fit: `lmer(analyte ~ CONTROL_STATUS * factor(FU) + analyte_baseline + covariates + (1|SUBJECT_ID))`
+5. Fit model
 6. Extract coefficients using summary()
 
 ### P-value Computation
