@@ -3,8 +3,8 @@
 ## Table of Contents
 
 1. [Main Function](#main-function)
-2. [Input Acceptance: What Data is Required](#input-acceptance-what-data-is-required)
-3. [Input Validation: What is Enforced](#input-validation-what-is-enforced)
+2. [Accepted Inputs](#accepted-inputs)
+3. [Input Validation](#input-validation)
 4. [Reporting Pipeline: QC and Summary Reports](#reporting-pipeline-qc-and-summary-reports)
 5. [Data Preparation](#data-preparation)
 6. [Analysis Method Selection](#analysis-method-selection)
@@ -54,7 +54,7 @@ list(
 
 ---
 
-## Input Acceptance: What Data is Required
+## Accepted Inputs
 
 ### Phenotype Data Format
 
@@ -97,7 +97,7 @@ cg00000109      0.721        0.735        0.691        0.702
 
 ---
 
-## Input Validation: What is Enforced
+## Input Validation
 
 **File**: `validation_helpers.R`
 
