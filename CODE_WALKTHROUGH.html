@@ -362,9 +362,9 @@ display: none;
 What Data is Required</a></li>
 <li><a href="#input-validation-what-is-enforced">Input Validation: What
 is Enforced</a></li>
-<li><a href="#data-preparation">Data Preparation</a></li>
 <li><a href="#reporting-pipeline-qc-and-summary-reports">Reporting
 Pipeline: QC and Summary Reports</a></li>
+<li><a href="#data-preparation">Data Preparation</a></li>
 <li><a href="#analysis-method-selection">Analysis Method
 Selection</a></li>
 <li><a href="#analysis-method-1-linear-regression-lm">Analysis Method 1:
@@ -578,19 +578,11 @@ samples)</li>
 <li>Issues warnings for analytes with NA values</li>
 <li>Issues warnings for analytes with near-zero variance</li>
 </ul>
+<p>Sex stratification: creates all/male/female groups (not performed if
+only one sex is present)</p>
 <p><strong>Returns</strong>: List with <code>omics$all</code>,
 <code>omics$male</code>, <code>omics$female</code> (each with only
 shared samples)</p>
-<hr />
-</div>
-<div id="data-preparation" class="section level2">
-<h2>Data Preparation</h2>
-<p>After validation, data is prepared for analysis in
-<code>main.R</code>.</p>
-<p><strong>Baseline Separation</strong></p>
-<p>Baseline (FU=0) phenotype samples are separated and their omics
-values are extracted for use as adjustment covariates. The analysis
-dataset uses only follow-up measurements (FU &gt; 0).</p>
 <hr />
 </div>
 <div id="reporting-pipeline-qc-and-summary-reports" class="section level2">
@@ -602,10 +594,11 @@ dataset uses only follow-up measurements (FU &gt; 0).</p>
 treatment group distribution, sex distribution</p>
 <p><strong>Omics Summary Report</strong></p>
 <p>For each analyte: number of non-missing values, mean, median,
-standard deviation, and value range (min/max)”</p>
+standard deviation, and value range (min/max)</p>
 <p><strong>Covariate Summary Report</strong></p>
 <p>For each additional covariate: data type, N missing, summary
-statistics (mean/SD/range for numeric; unique values for character)</p>
+statistics (mean/SD/range for numeric; unique values for
+factor/logical)</p>
 <p><strong>Randomization/Baseline Balance Report</strong></p>
 <p>For each analyte at baseline (FU=0 only):</p>
 <ul>
@@ -613,6 +606,16 @@ statistics (mean/SD/range for numeric; unique values for character)</p>
 <li>Records: mean difference, Cohen’s d, SE, p-value</li>
 <li>Applies Benjamini-Hochberg FDR correction</li>
 </ul>
+<hr />
+</div>
+<div id="data-preparation" class="section level2">
+<h2>Data Preparation</h2>
+<p>After validation, data is prepared for analysis in
+<code>main.R</code>.</p>
+<p><strong>Baseline Separation</strong></p>
+<p>Baseline (FU=0) phenotype samples are separated and their omics
+values are extracted for use as adjustment covariates. The analysis
+dataset uses only follow-up measurements (FU &gt; 0).</p>
 <hr />
 </div>
 <div id="analysis-method-selection" class="section level2">
@@ -649,7 +652,7 @@ where CHANGE = FU_1_value - baseline_value</code></pre>
 <li>Compute change score</li>
 <li>Fit:
 <code>lm(analyte ~ CONTROL_STATUS + analyte_baseline + covariates, data = model_data)</code></li>
-<li>Extract all fixed effect coefficients (skip intercept)</li>
+<li>Extract all fixed effect coefficients (including intercept)</li>
 </ol>
 <hr />
 </div>
@@ -725,6 +728,11 @@ fit &lt;- eBayes(fit)</code></pre>
 fit &lt;- eBayes(fit)</code></pre>
 <p>This adaptive approach ensures LIMMA works correctly whether data has
 repeated measurements or not.</p>
+<p><strong>Note on <code>analyte_baseline</code></strong>: LIMMA does
+not include <code>analyte_baseline</code> as a covariate. With massive
+DNAm datasets, LIMMA’s vectorized approach requires a single design
+matrix for all analytes, which precludes per-analyte baseline
+adjustments like those in LM/LME4.</p>
 </div>
 <div id="implementation-2" class="section level3">
 <h3>Implementation</h3>
@@ -787,7 +795,7 @@ coefficients).</p>
 <div id="results-output" class="section level2">
 <h2>Results Output</h2>
 <p>After analysis completes and correction is applied, results are
-returned in this format:</p>
+returned in this format. All available fixed effects were recorded.</p>
 <div id="results-table-structure" class="section level3">
 <h3>Results Table Structure</h3>
 <pre><code>ANALYTE_NAME    COEFFICIENT              EFFECT_SIZE       SE          P_VALUE        BH_P_VALUE
@@ -812,29 +820,6 @@ cg00000103      analyte_baseline        -0.7285            0.0535      1.2e-34  
 <li><strong>P_VALUE</strong>: Two-tailed p-value (unadjusted)</li>
 <li><strong>BH_P_VALUE</strong>: Benjamini-Hochberg FDR-adjusted
 p-value</li>
-</ul>
-</div>
-<div id="coefficient-types-reported" class="section level3">
-<h3>Coefficient Types Reported</h3>
-<p><strong>Treatment effects</strong>:</p>
-<ul>
-<li><code>CONTROL_STATUS</code>: Treatment effect</li>
-<li><code>CONTROL_STATUS:factor(FU)N</code>: Interaction (treatment
-effect modification at timepoint N)</li>
-</ul>
-<p><strong>Time effects</strong> (LME4 and LIMMA only):</p>
-<ul>
-<li><code>factor(FU)N</code>: Main effect of timepoint N</li>
-</ul>
-<p><strong>Baseline adjustment</strong>:</p>
-<ul>
-<li><code>analyte_baseline</code>: Effect of baseline analyte level on
-change</li>
-</ul>
-<p><strong>Covariate effects</strong>:</p>
-<ul>
-<li>Any column names specified in
-<code>additional_covariates</code></li>
 </ul>
 <hr />
 </div>

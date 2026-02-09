@@ -303,6 +303,8 @@ fit <- eBayes(fit)
 
 This adaptive approach ensures LIMMA works correctly whether data has repeated measurements or not.
 
+**Note on `analyte_baseline`**: LIMMA does not include `analyte_baseline` as a covariate. With massive DNAm datasets, LIMMA's vectorized approach requires a single design matrix for all analytes, which precludes per-analyte baseline adjustments like those in LM/LME4.
+
 ### Implementation
 
 **Vectorized change score computation**:
