@@ -642,7 +642,8 @@ dataset uses only follow-up measurements (FU &gt; 0).</p>
 <h3>Model Specification</h3>
 <pre><code>CHANGE ~ CONTROL_STATUS + FEMALE + analyte_baseline + additional_covariates
 
-where CHANGE = FU_1_value - baseline_value</code></pre>
+where CHANGE = FU_1_value - baseline_value
+      FEMALE only included when both sexes are present</code></pre>
 </div>
 <div id="implementation" class="section level3">
 <h3>Implementation</h3>
@@ -673,7 +674,8 @@ where:
   CHANGE = FU_value - baseline_value for that subject
   factor(FU) = categorical follow-up level
   CONTROL_STATUS * factor(FU) = treatment main effect AND treatment × FU interaction
-  (1|SUBJECT_ID) = random intercept per subject</code></pre>
+  (1|SUBJECT_ID) = random intercept per subject
+  FEMALE only included when both sexes are present</code></pre>
 <p>Fitted using: <code>lmer()</code> with <code>REML=FALSE</code>
 (maximum likelihood estimation)</p>
 </div>
@@ -727,6 +729,8 @@ fit &lt;- eBayes(fit)</code></pre>
 fit &lt;- eBayes(fit)</code></pre>
 <p>This adaptive approach ensures LIMMA works correctly whether data has
 repeated measurements or not.</p>
+<p><strong>Note on FEMALE</strong>: FEMALE only included when both sexes
+are present.</p>
 <p><strong>Note on <code>analyte_baseline</code></strong>: LIMMA does
 not include <code>analyte_baseline</code> as a covariate. With massive
 DNAm datasets, LIMMA’s vectorized approach requires a single design

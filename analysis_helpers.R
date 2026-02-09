@@ -96,10 +96,10 @@
     })
   }
   
-  # Apply multiple testing correction
-  if (nrow(results) > 0) {
-    results <- .apply_multiple_testing_correction(results)
-    return(results)
+   # Apply multiple testing correction (global across all analytes)
+   if (nrow(results) > 0) {
+     results$BH_P_VALUE <- p.adjust(results$P_VALUE, method = "BH")
+     return(results)
   } else {
     return(NULL)
   }
