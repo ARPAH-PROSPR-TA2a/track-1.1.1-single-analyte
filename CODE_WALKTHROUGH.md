@@ -13,7 +13,6 @@
 9. [Analysis Method 3: Empirical Bayes Moderation (LIMMA)](#analysis-method-3-empirical-bayes-moderation-limma)
 10. [Multiple Testing Correction](#multiple-testing-correction)
 11. [Results Output](#results-output)
-12. [Stratified Analysis: All, Male, Female](#stratified-analysis-all-male-female)
 
 ---
 
@@ -50,6 +49,8 @@ list(
   randomization_summary = randomization_report  # Baseline balance check
 )
 ```
+
+**Stratification**: The pipeline runs three times — once on all participants, once on males only (FEMALE == 0), and once on females only (FEMALE == 1). Male and female subsets are only created if both genders are present in the input data; if only one gender exists, the corresponding elements (male or female) will be NULL.
 
 ---
 
@@ -407,32 +408,4 @@ Sorted by ANALYTE_NAME (primary), then COEFFICIENT (secondary).
 - **P_VALUE**: Two-tailed p-value (unadjusted)
 - **BH_P_VALUE**: Benjamini-Hochberg FDR-adjusted p-value
 
----
 
-## Stratified Analysis: All, Male, Female
-
-**File**: `main.R`
-
-The entire pipeline runs three times:
-1. All participants
-2. Males only (if N >= 20)
-3. Females only (if N >= 20)
-
-```r
-for (dataset in c("all", "male", "female")) {
-  if (is.null(pheno_list[[dataset]])) {
-    next  # Skip if N < 20 or no data
-  }
-  
-  # Run validation, reporting, and analysis for this dataset
-  outputs[[dataset]] <- list(
-    results = analysis_results,
-    omics_summary = omics_report,
-    pheno_summary = pheno_report,
-    covariates_summary = covariates_report,
-    randomization_summary = randomization_report
-  )
-}
-```
-
-Each stratified analysis is completely independent with its own results, reports, and quality control checks.
