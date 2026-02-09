@@ -204,6 +204,7 @@ Is omics_type == "DNAm"?
 CHANGE ~ CONTROL_STATUS + FEMALE + analyte_baseline + additional_covariates
 
 where CHANGE = FU_1_value - baseline_value
+      FEMALE only included when both sexes are present
 ```
 
 ### Implementation
@@ -237,6 +238,7 @@ where:
   factor(FU) = categorical follow-up level
   CONTROL_STATUS * factor(FU) = treatment main effect AND treatment × FU interaction
   (1|SUBJECT_ID) = random intercept per subject
+  FEMALE only included when both sexes are present
 ```
 
 Fitted using: `lmer()` with `REML=FALSE` (maximum likelihood estimation)
@@ -303,6 +305,8 @@ fit <- eBayes(fit)
 ```
 
 This adaptive approach ensures LIMMA works correctly whether data has repeated measurements or not.
+
+**Note on FEMALE**: FEMALE only included when both sexes are present.
 
 **Note on `analyte_baseline`**: LIMMA does not include `analyte_baseline` as a covariate. With massive DNAm datasets, LIMMA's vectorized approach requires a single design matrix for all analytes, which precludes per-analyte baseline adjustments like those in LM/LME4.
 
