@@ -146,6 +146,11 @@
       covariate_terms <- c(covariate_terms, additional_covariates)
     }
     
+    # Exclude FEMALE if it has zero variance
+    if (var(model_data$FEMALE, na.rm = TRUE) == 0) {
+      covariate_terms <- setdiff(covariate_terms, "FEMALE")
+    }
+    
     formula_str <- "analyte ~ CONTROL_STATUS"
     if (length(covariate_terms) > 0) {
       formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
@@ -267,19 +272,24 @@
    model_data$analyte <- NA_real_
    model_data$analyte_baseline <- NA_real_
    
-     # Build model formula
-     # analyte ~ CONTROL_STATUS * factor(FU) + FEMALE + baseline_analyte + covariates + (1|SUBJECT_ID)
-     # Extracts ALL fixed effect coefficients from the model
-     covariate_terms <- c("FEMALE", "analyte_baseline")
-    if (!is.null(additional_covariates)) {
-      covariate_terms <- c(covariate_terms, additional_covariates)
-    }
-    
-     formula_str <- "analyte ~ CONTROL_STATUS * factor(FU)"
-     if (length(covariate_terms) > 0) {
-       formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
+      # Build model formula
+      # analyte ~ CONTROL_STATUS * factor(FU) + FEMALE + baseline_analyte + covariates + (1|SUBJECT_ID)
+      # Extracts ALL fixed effect coefficients from the model
+      covariate_terms <- c("FEMALE", "analyte_baseline")
+     if (!is.null(additional_covariates)) {
+       covariate_terms <- c(covariate_terms, additional_covariates)
      }
-     formula_str <- paste(formula_str, "+ (1|SUBJECT_ID)")
+     
+     # Exclude FEMALE if it has zero variance
+     if (var(model_data$FEMALE, na.rm = TRUE) == 0) {
+       covariate_terms <- setdiff(covariate_terms, "FEMALE")
+     }
+     
+      formula_str <- "analyte ~ CONTROL_STATUS * factor(FU)"
+      if (length(covariate_terms) > 0) {
+        formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
+      }
+      formula_str <- paste(formula_str, "+ (1|SUBJECT_ID)")
     
     # Pre-compute loop invariants
     analyte_names <- omics_df$ANALYTE_NAME
@@ -393,17 +403,22 @@
     # Compute change scores vectorized: analyte_change is (n_analytes × n_samples) matrix
     analyte_change <- omics_values - omics_baseline_merged
     
-    # Build design matrix based on FU structure
-    if (requires_mixed_effects) {
-      message("LIMMA: Multiple FU - using full model with FU effects")
-      pheno_merged$FU_factor <- factor(pheno_merged$FU)
-      design <- model.matrix(~ CONTROL_STATUS * FU_factor + FEMALE, data = pheno_merged)
-    } else {
-      message("LIMMA: Single FU - using simple model without FU effects")
-      design <- model.matrix(~ CONTROL_STATUS + FEMALE, data = pheno_merged)
-    }
-    
-    # Add additional covariates if provided
+     # Build design matrix based on FU structure
+     if (requires_mixed_effects) {
+       message("LIMMA: Multiple FU - using full model with FU effects")
+       pheno_merged$FU_factor <- factor(pheno_merged$FU)
+       design <- model.matrix(~ CONTROL_STATUS * FU_factor + FEMALE, data = pheno_merged)
+     } else {
+       message("LIMMA: Single FU - using simple model without FU effects")
+       design <- model.matrix(~ CONTROL_STATUS + FEMALE, data = pheno_merged)
+     }
+     
+     # Exclude FEMALE if it has zero variance
+     if (var(design[, "FEMALE"]) == 0) {
+       design <- design[, colnames(design) != "FEMALE", drop = FALSE]
+     }
+     
+     # Add additional covariates if provided
     if (!is.null(additional_covariates)) {
       for (cov in additional_covariates) {
         if (cov %in% colnames(pheno_merged)) {
