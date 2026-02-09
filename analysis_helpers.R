@@ -5,14 +5,14 @@
     return(results_df)
   }
   
-  # Extract p-values
-  p_values <- results_df[[p_value_col]]
+  # Apply BH correction separately for each coefficient
+  results_df$BH_P_VALUE <- NA_real_
   
-  # Calculate Benjamini-Hochberg (FDR) correction
-  bh_p <- p.adjust(p_values, method = "BH")
-  
-  # Add corrected p-values to results
-  results_df$BH_P_VALUE <- bh_p
+  for (coef in unique(results_df$COEFFICIENT)) {
+    coef_idx <- which(results_df$COEFFICIENT == coef)
+    p_values_coef <- results_df[[p_value_col]][coef_idx]
+    results_df$BH_P_VALUE[coef_idx] <- p.adjust(p_values_coef, method = "BH")
+  }
   
   return(results_df)
 }

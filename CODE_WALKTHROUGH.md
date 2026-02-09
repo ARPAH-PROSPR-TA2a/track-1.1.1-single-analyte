@@ -312,13 +312,16 @@ This adaptive approach ensures LIMMA works correctly whether data has repeated m
 
 **File**: `analysis_helpers.R`
 
-After all analyses complete, global Benjamini-Hochberg FDR correction applied:
+After all analyses complete, Benjamini-Hochberg FDR correction is applied separately for each coefficient:
 
 ```r
-bh_p <- p.adjust(p_values, method = "BH")
+for (coef in unique(results$COEFFICIENT)) {
+  p_values_coef <- results$P_VALUE[results$COEFFICIENT == coef]
+  results$BH_P_VALUE[results$COEFFICIENT == coef] <- p.adjust(p_values_coef, method = "BH")
+}
 ```
 
-All p-values corrected together (all analytes × all coefficients).
+Each coefficient (fixed effect) receives its own FDR correction across all analytes, resulting in coefficient-specific p-value thresholds.
 
 ---
 

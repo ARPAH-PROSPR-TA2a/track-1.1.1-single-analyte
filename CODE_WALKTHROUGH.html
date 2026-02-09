@@ -358,10 +358,8 @@ display: none;
 <h2>Table of Contents</h2>
 <ol style="list-style-type: decimal">
 <li><a href="#main-function">Main Function</a></li>
-<li><a href="#input-acceptance-what-data-is-required">Input Acceptance:
-What Data is Required</a></li>
-<li><a href="#input-validation-what-is-enforced">Input Validation: What
-is Enforced</a></li>
+<li><a href="#accepted-inputs">Accepted Inputs</a></li>
+<li><a href="#input-validation">Input Validation</a></li>
 <li><a href="#reporting-pipeline-qc-and-summary-reports">Reporting
 Pipeline: QC and Summary Reports</a></li>
 <li><a href="#data-preparation">Data Preparation</a></li>
@@ -452,8 +450,8 @@ the corresponding elements (male or female) will be NULL.</p>
 <hr />
 </div>
 </div>
-<div id="input-acceptance-what-data-is-required" class="section level2">
-<h2>Input Acceptance: What Data is Required</h2>
+<div id="accepted-inputs" class="section level2">
+<h2>Accepted Inputs</h2>
 <div id="phenotype-data-format" class="section level3">
 <h3>Phenotype Data Format</h3>
 <p>The <code>pheno</code> data.frame must contain these columns:</p>
@@ -550,8 +548,8 @@ cg00000109      0.721        0.735        0.691        0.702</code></pre>
 <hr />
 </div>
 </div>
-<div id="input-validation-what-is-enforced" class="section level2">
-<h2>Input Validation: What is Enforced</h2>
+<div id="input-validation" class="section level2">
+<h2>Input Validation</h2>
 <p><strong>File</strong>: <code>validation_helpers.R</code></p>
 <p><strong>Omics Type Validation</strong></p>
 <p>Checks that <code>omics_type</code> is one of: “Proteomics”,
@@ -653,8 +651,7 @@ where CHANGE = FU_1_value - baseline_value</code></pre>
 <li>Get baseline values for analyte</li>
 <li>Get FU values</li>
 <li>Compute change score</li>
-<li>Fit:
-<code>lm(analyte ~ CONTROL_STATUS + analyte_baseline + covariates, data = model_data)</code></li>
+<li>Fit model</li>
 <li>Extract all fixed effect coefficients (including intercept)</li>
 </ol>
 <hr />
@@ -689,8 +686,7 @@ SUBJECT_ID, FU, CONTROL_STATUS, covariates</li>
 <li>Get baseline and FU values</li>
 <li>Compute change score</li>
 <li>Fill data template</li>
-<li>Fit:
-<code>lmer(analyte ~ CONTROL_STATUS * factor(FU) + analyte_baseline + covariates + (1|SUBJECT_ID))</code></li>
+<li>Fit model</li>
 <li>Extract coefficients using summary()</li>
 </ol>
 </div>
@@ -742,11 +738,15 @@ adjustments like those in LM/LME4.</p>
 <div id="multiple-testing-correction" class="section level2">
 <h2>Multiple Testing Correction</h2>
 <p><strong>File</strong>: <code>analysis_helpers.R</code></p>
-<p>After all analyses complete, global Benjamini-Hochberg FDR correction
-applied:</p>
-<pre class="r"><code>bh_p &lt;- p.adjust(p_values, method = &quot;BH&quot;)</code></pre>
-<p>All p-values corrected together (all analytes × all
-coefficients).</p>
+<p>After all analyses complete, Benjamini-Hochberg FDR correction is
+applied separately for each coefficient:</p>
+<pre class="r"><code>for (coef in unique(results$COEFFICIENT)) {
+  p_values_coef &lt;- results$P_VALUE[results$COEFFICIENT == coef]
+  results$BH_P_VALUE[results$COEFFICIENT == coef] &lt;- p.adjust(p_values_coef, method = &quot;BH&quot;)
+}</code></pre>
+<p>Each coefficient (fixed effect) receives its own FDR correction
+across all analytes, resulting in coefficient-specific p-value
+thresholds.</p>
 <hr />
 </div>
 <div id="results-output" class="section level2">
