@@ -378,7 +378,7 @@ All p-values corrected together (all analytes × all coefficients).
 
 ## Results Output
 
-After analysis completes and correction is applied, results are returned in this format:
+After analysis completes and correction is applied, results are returned in this format. All available fixed effects were recorded.
 
 ### Results Table Structure
 
@@ -404,29 +404,6 @@ Sorted by ANALYTE_NAME (primary), then COEFFICIENT (secondary).
 - **SE**: Standard error
 - **P_VALUE**: Two-tailed p-value (unadjusted)
 - **BH_P_VALUE**: Benjamini-Hochberg FDR-adjusted p-value
-
-### Coefficient Types Reported
-
-**Intercept**:
-
-- `(Intercept)`: Model intercept (predicted value when all covariates = 0)
-
-**Treatment effects**:
-
-- `CONTROL_STATUS`: Treatment effect
-- `CONTROL_STATUS:factor(FU)N`: Interaction (treatment effect modification at timepoint N)
-
-**Time effects** (LME4 and LIMMA only):
-
-- `factor(FU)N`: Main effect of timepoint N
-
-**Baseline adjustment**:
-
-- `analyte_baseline`: Effect of baseline analyte level on change
-
-**Covariate effects**:
-
-- Any column names specified in `additional_covariates`
 
 ---
 
