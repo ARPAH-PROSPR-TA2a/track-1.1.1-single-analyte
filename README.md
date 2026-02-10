@@ -1,9 +1,3 @@
----
-editor_options: 
-  markdown: 
-    wrap: 72
----
-
 # Omics-Wide Association Study Pipeline
 
 This repository, written in R, provides a reliable implementation of
@@ -102,7 +96,7 @@ Phenotype data must be a data frame with the following **required
 columns**:
 
 | Column                  | Type                     | Description                                          | Valid Values                            |
-|-------------------------|--------------------------|------------------------------------------------------|-----------------------------------------|
+|----------------|----------------|------------------------|------------------|
 | `SAMPLE_ID`             | Character                | Unique identifier for each sample                    | Unique, no duplicates                   |
 | `SUBJECT_ID`            | Character                | Subject identifier for tracking across follow-ups    | All SUBJECT_ID\*FU pairs must be unique |
 | `FU`                    | Factor                   | Follow-up timepoint                                  | Levels: 0 (baseline), 1-3 (follow-ups)  |
@@ -149,7 +143,7 @@ sample_004     subj_002    1   0               0       62     64
 Omics data must be a data frame with:
 
 | Column            | Type      | Description                                                                 |
-|-------------------|-----------|-----------------------------------------------------------------------------|
+|-------------|-------------|---------------------------------------------|
 | `ANALYTE_NAME`    | Character | Unique identifier for each feature (analyte, protein, metabolite, CpG site) |
 | Sample ID columns | Numeric   | One column per sample, named exactly as in `pheno$SAMPLE_ID`                |
 
@@ -194,4 +188,4 @@ pipeline, see [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md).
 
 For any bugs or issues running the program, please feel free to submit
 an Issue in this repository or email Will Marella at
-[wm2530\@cumc.columbia.edu](mailto:wm2530@cumc.columbia.edu){.email}
+[wm2530\@cumc.columbia.edu](mailto:wm2530@cumc.columbia.edu)
