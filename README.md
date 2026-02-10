@@ -84,15 +84,15 @@ A list containing results stratified by gender:
 
 Each stratum contains:
 
--   **`$results`**: Data frame of association test results with columns
-    for each coefficient, p-values, effect sizes, and confidence
-    intervals
--   **`$pheno_summary`**: Data quality report for phenotype data
--   **`$omics_summary`**: Data quality report for omics data
+-   **`$results`**: Data frame of association test results for each
+    analyte, with columns for each coefficient, p-values, effect sizes,
+    and confidence intervals
+-   **`$pheno_summary`**: Summary of phenotype data variables
+-   **`$omics_summary`**: Summary of omics analytes
 -   **`$covariates_summary`**: Summary of additional covariates (NULL if
     no additional covariates provided)
--   **`$randomization_summary`**: Report on randomization/balance of key
-    variables
+-   **`$randomization_summary`**: Report on randomization balance of
+    each analyte
 
 ## Data Format Requirements
 
@@ -101,26 +101,37 @@ Each stratum contains:
 Phenotype data must be a data frame with the following **required
 columns**:
 
-| Column                  | Type                     | Description                                          | Valid Values                           |
-|--------------|--------------|----------------------------|-----------------|
-| `SAMPLE_ID`             | Character                | Unique identifier for each sample                    | Unique, no duplicates                  |
-| `SUBJECT_ID`            | Character                | Subject identifier for tracking across follow-ups    | Any unique or repeated value           |
-| `FU`                    | Factor                   | Follow-up timepoint                                  | Levels: 0 (baseline), 1-3 (follow-ups) |
-| `FEMALE`                | Factor                   | Sex indicator                                        | Levels: 0 (male), 1 (female)           |
-| `CONTROL_STATUS`        | Factor                   | Treatment assignment                                 | Levels: 0 (control), 1 (treatment)     |
-| *Additional Covariates* | *Factor/Numeric/Logical* | *Optional columns for additional analysis variables* | *Any valid values*                     |
+| Column                  | Type                     | Description                                          | Valid Values                            |
+|-------------------------|--------------------------|------------------------------------------------------|-----------------------------------------|
+| `SAMPLE_ID`             | Character                | Unique identifier for each sample                    | Unique, no duplicates                   |
+| `SUBJECT_ID`            | Character                | Subject identifier for tracking across follow-ups    | All SUBJECT_ID\*FU pairs must be unique |
+| `FU`                    | Factor                   | Follow-up timepoint                                  | Levels: 0 (baseline), 1-3 (follow-ups)  |
+| `FEMALE`                | Factor                   | Sex indicator                                        | Levels: 0 (male), 1 (female)            |
+| `CONTROL_STATUS`        | Factor                   | Treatment assignment                                 | Levels: 0 (control), 1 (treatment)      |
+| *Additional Covariates* | *Factor/Numeric/Logical* | *Optional columns for additional analysis variables* | *Any valid values*                      |
 
 **Data requirements:**
 
 -   Must contain at least one baseline sample (`FU == 0`) and one
     follow-up sample (`FU >= 1`)
 -   Must contain both males (`FEMALE == 0`) and females (`FEMALE == 1`),
-    or gender stratification will be skipped
+    otherwise gender stratification will be skipped
 -   Must contain both control (`CONTROL_STATUS == 0`) and treatment
     (`CONTROL_STATUS == 1`) groups
 -   No duplicate `SAMPLE_ID` values
+-   All `SUBJECT_ID*FU` pairs must be unique
 -   `FU`, `FEMALE`, and `CONTROL_STATUS` must be factors (or numeric
     values that will be automatically converted to factors)
+
+**Example structure:**
+
+```         
+SAMPLE_ID      SUBJECT_ID  FU  CONTROL_STATUS  FEMALE  agebl  agevis
+sample_001     subj_001    0   1               1       55     56
+sample_002     subj_001    1   1               1       55     57
+sample_003     subj_002    0   0               0       62     63
+sample_004     subj_002    1   0               0       62     64
+```
 
 **Additional covariates (optional):**
 
@@ -129,45 +140,52 @@ columns**:
 -   Must be numeric, factor, or logical
 -   NA values are allowed but will reduce analysis sample size with a
     warning
--   Specified using the `additional_covariates` parameter
+-   Specified using the `additional_covariates` parameter, a character
+    vector that names the columns within `pheno` that should be included
+    as additional covariates in the models
 
 ### Omics Data
 
 Omics data must be a data frame with:
 
-| Element            | Description                                                                |
-|-----------------|-------------------------------------------------------|
-| `ANALYTE_NAME`     | Column containing identifiers for each analyte/protein/site (first column) |
-| Additional columns | Named by `SAMPLE_ID` (must match `SAMPLE_ID` values from phenotype data)   |
-| Data values        | All analyte measurements must be numeric                                   |
+| Column            | Type      | Description                                                                 |
+|-------------------|-----------|-----------------------------------------------------------------------------|
+| `ANALYTE_NAME`    | Character | Unique identifier for each feature (analyte, protein, metabolite, CpG site) |
+| Sample ID columns | Numeric   | One column per sample, named exactly as in `pheno$SAMPLE_ID`                |
 
-**Data requirements:** - Column names (except `ANALYTE_NAME`) must match
-`SAMPLE_ID` values from phenotype data - All data columns must be
-numeric - Analytes with NA values or near-zero variance will generate a
-warning but are included in analysis - Any omics samples not in
-phenotype data are automatically excluded - Any phenotype samples not in
-omics data are automatically excluded
+**Data requirements:**
+
+-   `ANALYTE_NAME` column is required
+-   Column names (except `ANALYTE_NAME`) must match `SAMPLE_ID` values
+    from phenotype data, the rest will be dropped. The final number of
+    samples will be reported
+-   All measurement columns must be numeric
+-   Analytes with NA values or near-zero variance will generate a
+    warning but are included in analysis
+-   Any omics samples not in phenotype data are automatically excluded
+-   Any phenotype samples not in omics data are automatically excluded
 
 **Example structure:**
 
 ```         
-ANALYTE_NAME  SAMPLE_001  SAMPLE_002  SAMPLE_003
-Protein_A     0.45        0.52        0.48
-Protein_B     1.23        1.31        1.19
-...
+ANALYTE_NAME    sample_001   sample_002   sample_003   sample_004
+cg00000029      0.602        0.515        0.684        0.598
+cg00000103      0.456        0.468        0.412        0.401
+cg00000109      0.721        0.735        0.691        0.702
 ```
 
 ## Analysis Methods
 
 The pipeline automatically selects the appropriate analysis method based
-on your data structure:
+on omics type and follow-up structure:
 
--   **Linear Model (LM)**: Used when all follow-up values are 0-1
-    (baseline and single follow-up only)
--   **Linear Mixed-Effects Model (LME4)**: Used when multiple follow-ups
-    are present (FU values of 2-3)
--   **Limma**: Used for DNA methylation data with appropriate precision
-    weighting
+```         
+Is omics_type == "DNAm"?
+├─ YES → Use LIMMA (vectorized analysis with empirical Bayes)
+└─ NO → Check maximum follow-up level
+       ├─ max FU == 1 → Use LM (linear regression)
+       └─ max FU > 1 → Use LME4 (linear mixed effects)
+```
 
 ## More Information
 
