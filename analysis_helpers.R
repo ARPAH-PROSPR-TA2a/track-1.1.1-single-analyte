@@ -285,7 +285,7 @@
        covariate_terms <- setdiff(covariate_terms, "FEMALE")
      }
      
-      formula_str <- "analyte ~ CONTROL_STATUS * factor(FU)"
+      formula_str <- "analyte ~ CONTROL_STATUS * FU"
       if (length(covariate_terms) > 0) {
         formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
       }

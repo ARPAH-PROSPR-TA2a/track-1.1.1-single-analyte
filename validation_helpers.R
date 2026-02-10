@@ -39,33 +39,46 @@
     stop("Missing required columns: ", paste(missing_cols, collapse = ", "))
   }
   
-  # Step 3: Column-specific validation
-  if (any(duplicated(pheno$SAMPLE_ID))) {
-    stop("SAMPLE_ID contains duplicate values")
-  }
-  
+  # Step 3: Validate required columns (values, then types)
+  # FU validation
   if (!all(pheno$FU %in% 0:3)) {
     stop("FU must contain only values 0, 1, 2, or 3")
   }
-  
   if (!any(pheno$FU == 0)) {
     stop("pheno must contain at least one baseline sample (FU == 0)")
   }
-  
   if (!any(pheno$FU == 1)) {
     stop("pheno must contain at least one follow-up sample (FU >= 1)")
   }
+  if (!is.factor(pheno$FU)) {
+    warning("FU column is not a factor. Converting to factor.")
+    pheno$FU <- factor(pheno$FU)
+  }
   
+  # FEMALE validation
   if (!all(pheno$FEMALE %in% 0:1)) {
     stop("FEMALE must contain only values 0 or 1")
   }
+  if (!is.factor(pheno$FEMALE)) {
+    warning("FEMALE column is not a factor. Converting to factor.")
+    pheno$FEMALE <- factor(pheno$FEMALE)
+  }
   
+  # CONTROL_STATUS validation
   if (!all(pheno$CONTROL_STATUS %in% 0:1)) {
     stop("CONTROL_STATUS must contain only values 0 or 1")
   }
-  
   if (!any(pheno$CONTROL_STATUS == 0) || !any(pheno$CONTROL_STATUS == 1)) {
     stop("pheno must contain both control (CONTROL_STATUS == 0) and treatment (CONTROL_STATUS == 1)")
+  }
+  if (!is.factor(pheno$CONTROL_STATUS)) {
+    warning("CONTROL_STATUS column is not a factor. Converting to factor.")
+    pheno$CONTROL_STATUS <- factor(pheno$CONTROL_STATUS)
+  }
+  
+  # Step 4: Column-specific validation
+  if (any(duplicated(pheno$SAMPLE_ID))) {
+    stop("SAMPLE_ID contains duplicate values")
   }
   
   # Check SUBJECT_ID/FU pair uniqueness
@@ -76,7 +89,7 @@
     pheno <- pheno[!duplicated(subject_fu_pairs), ]
   }
   
-  # Step 4: Additional covariates validation
+  # Step 5: Additional covariates validation
   if (!is.null(additional_covariates)) {
     # Check all covariates exist in pheno
     missing_addl <- setdiff(additional_covariates, names(pheno))
@@ -100,11 +113,11 @@
     }
   }
   
-  # Step 5: Gender composition detection
+  # Step 6: Gender composition detection
   n_male <- sum(pheno$FEMALE == 0, na.rm = TRUE)
   n_female <- sum(pheno$FEMALE == 1, na.rm = TRUE)
   
-  # Step 6: Subset creation
+  # Step 7: Subset creation
   # Set both to NULL if either gender is missing
   if (n_male == 0 || n_female == 0) {
     warning("Dataset contains only one gender. Male and female subsets will be NULL.")
@@ -115,10 +128,10 @@
     female_pheno <- pheno[pheno$FEMALE == 1, ]
   }
   
-  # Step 7: Mixed effects flag
-  requires_mixed_effects <- max(pheno$FU, na.rm = TRUE) >= 2
+  # Step 8: Mixed effects flag
+  requires_mixed_effects <- max(as.numeric(as.character(pheno$FU)), na.rm = TRUE) >= 2
   
-  # Step 8: Column cleanup
+  # Step 9: Column cleanup
   cols_to_keep <- c(required_cols, additional_covariates)
   cols_to_keep <- intersect(cols_to_keep, names(pheno))
   

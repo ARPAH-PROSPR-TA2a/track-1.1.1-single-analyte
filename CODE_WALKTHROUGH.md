@@ -64,9 +64,9 @@ The `pheno` data.frame must contain these columns:
 |:---|:---:|:---|
 | SAMPLE_ID | character | Unique identifier for each measurement occasion |
 | SUBJECT_ID | character | Subject/participant identifier (repeated across FU levels) |
-| FU | numeric | Follow-up timepoint: 0 (baseline), 1, 2, ... |
-| CONTROL_STATUS | numeric | Treatment group: 0 (control), 1 (treatment) |
-| FEMALE | numeric | Sex: 0 (male), 1 (female) |
+| FU | factor | Follow-up timepoint: levels 0 (baseline), 1, 2, ... (numeric values converted to factor if needed) |
+| CONTROL_STATUS | factor | Treatment group: levels 0 (control), 1 (treatment) (numeric values converted to factor if needed) |
+| FEMALE | factor | Sex: levels 0 (male), 1 (female) (numeric values converted to factor if needed) |
 | *Any additional covariates specified* | numeric/factor/logical | Additional variables to adjust for |
 
 **Minimal Example**:
@@ -231,12 +231,12 @@ Per-analyte loop:
 ### Model Specification
 
 ```
-CHANGE ~ CONTROL_STATUS * factor(FU) + FEMALE + analyte_baseline + additional_covariates + (1|SUBJECT_ID)
+CHANGE ~ CONTROL_STATUS * FU + FEMALE + analyte_baseline + additional_covariates + (1|SUBJECT_ID)
 
 where:
   CHANGE = FU_value - baseline_value for that subject
-  factor(FU) = categorical follow-up level
-  CONTROL_STATUS * factor(FU) = treatment main effect AND treatment × FU interaction
+  FU = categorical follow-up level
+  CONTROL_STATUS * FU = treatment main effect AND treatment × FU interaction
   (1|SUBJECT_ID) = random intercept per subject
   FEMALE only included when both sexes are present
 ```
@@ -281,7 +281,7 @@ LIMMA adapts its model based on follow-up structure:
 
 **Multiple FU (max FU > 1)**:
 ```
-CHANGE ~ CONTROL_STATUS * factor(FU) + FEMALE + additional_covariates
+CHANGE ~ CONTROL_STATUS * FU + FEMALE + additional_covariates
 ```
 
 With repeated measures handled via:
@@ -340,7 +340,7 @@ ANALYTE_NAME    COEFFICIENT              EFFECT_SIZE       SE          P_VALUE  
 cg00000029      analyte_baseline        -0.5644           0.0465      5.8e-29       3.5e-28
 cg00000029      agebl                    0.0001            0.0001      0.156         0.941
 cg00000029      CONTROL_STATUS          -0.0129            0.0084      0.127         0.941
-cg00000029      CONTROL_STATUS:factor(FU)2  0.0058        0.0087      0.508         0.941
+cg00000029      CONTROL_STATUS:FU2      0.0058            0.0087      0.508         0.941
 cg00000103      analyte_baseline        -0.7285            0.0535      1.2e-34       2.2e-33
 ...
 ```
