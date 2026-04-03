@@ -146,8 +146,8 @@
       covariate_terms <- c(covariate_terms, additional_covariates)
     }
     
-    # Exclude FEMALE if it has zero variance
-    if (var(model_data$FEMALE, na.rm = TRUE) == 0) {
+    # Exclude FEMALE if it has only one level
+    if (length(unique(model_data$FEMALE)) == 1) {
       covariate_terms <- setdiff(covariate_terms, "FEMALE")
     }
     
@@ -280,8 +280,8 @@
        covariate_terms <- c(covariate_terms, additional_covariates)
      }
      
-     # Exclude FEMALE if it has zero variance
-     if (var(model_data$FEMALE, na.rm = TRUE) == 0) {
+     # Exclude FEMALE if it has only one level
+     if (length(unique(model_data$FEMALE)) == 1) {
        covariate_terms <- setdiff(covariate_terms, "FEMALE")
      }
      
@@ -413,8 +413,8 @@
        design <- model.matrix(~ CONTROL_STATUS + FEMALE, data = pheno_merged)
      }
      
-     # Exclude FEMALE if it has zero variance
-     if (var(design[, "FEMALE"]) == 0) {
+     # Exclude FEMALE if it has only one level
+     if ("FEMALE" %in% colnames(design) && length(unique(design[, "FEMALE"])) == 1) {
        design <- design[, colnames(design) != "FEMALE", drop = FALSE]
      }
      
@@ -515,7 +515,7 @@
     results <- .perform_limma_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates, mixed_effects)
   } else {
     # Proteomics/Metabolomics - check if LM or LME4
-    max_fu <- max(pheno_analysis$FU, na.rm = TRUE)
+    max_fu <- max(as.numeric(as.character(pheno_analysis$FU)), na.rm = TRUE)
     if (max_fu == 1) {
       # Single follow-up: use linear regression
       results <- .perform_lm_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates)
