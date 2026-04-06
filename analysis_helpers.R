@@ -1,19 +1,20 @@
-.apply_multiple_testing_correction <- function(results_df, p_value_col = "P_VALUE") {
-  
+.apply_multiple_testing_correction <- function(results_df, p_value_col = "P_VALUE",
+                                                group_col = "COEFFICIENT") {
+
   # Edge case: empty results
   if (is.null(results_df) || nrow(results_df) == 0) {
     return(results_df)
   }
-  
-  # Apply BH correction separately for each coefficient
+
+  # Apply BH correction separately for each group (coefficient or FU level)
   results_df$BH_P_VALUE <- NA_real_
-  
-  for (coef in unique(results_df$COEFFICIENT)) {
-    coef_idx <- which(results_df$COEFFICIENT == coef)
-    p_values_coef <- results_df[[p_value_col]][coef_idx]
-    results_df$BH_P_VALUE[coef_idx] <- p.adjust(p_values_coef, method = "BH")
+
+  for (grp in unique(results_df[[group_col]])) {
+    grp_idx <- which(results_df[[group_col]] == grp)
+    p_values_grp <- results_df[[p_value_col]][grp_idx]
+    results_df$BH_P_VALUE[grp_idx] <- p.adjust(p_values_grp, method = "BH")
   }
-  
+
   return(results_df)
 }
 
@@ -106,14 +107,24 @@
 }
 
 .perform_lm_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL) {
-   
+
     # Linear regression for single follow-up timepoint only
     # Extracts ALL fixed effect coefficients (treatment, covariates)
-    
-    # Initialize results
-    results <- data.frame(
+
+    # Initialize results - raw coefficients
+    coefficients <- data.frame(
       ANALYTE_NAME = character(),
       COEFFICIENT = character(),
+      EFFECT_SIZE = numeric(),
+      SE = numeric(),
+      P_VALUE = numeric(),
+      stringsAsFactors = FALSE
+    )
+
+    # Initialize results - treatment effects (single FU for LM)
+    treatment_effects <- data.frame(
+      ANALYTE_NAME = character(),
+      FU = integer(),
       EFFECT_SIZE = numeric(),
       SE = numeric(),
       P_VALUE = numeric(),
@@ -200,18 +211,18 @@
          fit <- lm(as.formula(formula_str), data = model_data)
          fit_summary <- summary(fit)
          
-        # Extract all fixed effect coefficients (except intercept)
+        # Extract all fixed effect coefficients
         coef_table <- fit_summary$coefficients
-        
+
         # Loop through all coefficients
         for (coef_name in rownames(coef_table)) {
           # Extract coefficient info
           effect_size <- coef_table[coef_name, "Estimate"]
           se <- coef_table[coef_name, "Std. Error"]
           p_value <- coef_table[coef_name, "Pr(>|t|)"]
-          
-          # Add to results
-          results <- rbind(results, data.frame(
+
+          # Add to coefficients
+          coefficients <- rbind(coefficients, data.frame(
             ANALYTE_NAME = analyte_name,
             COEFFICIENT = coef_name,
             EFFECT_SIZE = effect_size,
@@ -219,31 +230,57 @@
             P_VALUE = p_value,
             stringsAsFactors = FALSE
           ))
+
+          # Extract treatment effect (CONTROL_STATUS coefficient)
+          if (grepl("^CONTROL_STATUS", coef_name)) {
+            treatment_effects <- rbind(treatment_effects, data.frame(
+              ANALYTE_NAME = analyte_name,
+              FU = as.integer(as.character(fu_level)),
+              EFFECT_SIZE = effect_size,
+              SE = se,
+              P_VALUE = p_value,
+              stringsAsFactors = FALSE
+            ))
+          }
         }
-      
+
     }, error = function(e) {
       warning("Error processing analyte '", analyte_names[i], "': ", e$message)
     })
   }
-  
+
   # Return NULL if no results
-  if (nrow(results) == 0) {
+  if (nrow(coefficients) == 0) {
     return(NULL)
   }
-  
-  return(results)
+
+  return(list(
+    coefficients = coefficients,
+    treatment_effects = treatment_effects
+  ))
 }
 
 
 .perform_lme4_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL) {
-   
+
     # Load required packages
     require(lme4)
-   
-    # Initialize results
-    results <- data.frame(
+    require(emmeans)
+
+    # Initialize results - raw coefficients
+    coefficients <- data.frame(
       ANALYTE_NAME = character(),
       COEFFICIENT = character(),
+      EFFECT_SIZE = numeric(),
+      SE = numeric(),
+      P_VALUE = numeric(),
+      stringsAsFactors = FALSE
+    )
+
+    # Initialize results - treatment effects at each FU
+    treatment_effects <- data.frame(
+      ANALYTE_NAME = character(),
+      FU = integer(),
       EFFECT_SIZE = numeric(),
       SE = numeric(),
       P_VALUE = numeric(),
@@ -340,8 +377,8 @@
           t_stat <- coef_table[coef_name, "t value"]
           # Compute p-value from t-statistic
           p_value <- 2 * pt(-abs(t_stat), df = df_approx)
-          
-          results <- rbind(results, data.frame(
+
+          coefficients <- rbind(coefficients, data.frame(
             ANALYTE_NAME = analyte_name,
             COEFFICIENT = coef_name,
             EFFECT_SIZE = effect_size,
@@ -350,18 +387,37 @@
             stringsAsFactors = FALSE
           ))
         }
-      
+
+        # Extract treatment effects at each FU using emmeans
+        emm <- emmeans(fit, ~ CONTROL_STATUS | FU)
+        contr <- pairs(emm, reverse = TRUE)  # (treatment - control)
+        contr_df <- as.data.frame(contr)
+
+        for (j in seq_len(nrow(contr_df))) {
+          treatment_effects <- rbind(treatment_effects, data.frame(
+            ANALYTE_NAME = analyte_name,
+            FU = as.integer(as.character(contr_df$FU[j])),
+            EFFECT_SIZE = contr_df$estimate[j],
+            SE = contr_df$SE[j],
+            P_VALUE = contr_df$p.value[j],
+            stringsAsFactors = FALSE
+          ))
+        }
+
     }, error = function(e) {
       warning("Error processing analyte '", analyte_names[i], "': ", e$message)
     })
   }
-  
+
   # Return NULL if no results
-  if (nrow(results) == 0) {
+  if (nrow(coefficients) == 0) {
     return(NULL)
   }
-  
-  return(results)
+
+  return(list(
+    coefficients = coefficients,
+    treatment_effects = treatment_effects
+  ))
 }
 
 
@@ -487,32 +543,133 @@
     }
     
     # Trim results to actual rows used
-    results <- results[1:row_idx, ]
-    
+    coefficients <- results[1:row_idx, ]
+
     # Return NULL if no results
-    if (nrow(results) == 0) {
+    if (nrow(coefficients) == 0) {
       return(NULL)
     }
-    
-    return(results)
+
+    # ===== Compute treatment effects using contrasts.fit() =====
+
+    # Get FU levels (excluding baseline which was filtered out earlier)
+    fu_levels_numeric <- sort(unique(as.numeric(as.character(pheno_merged$FU))))
+
+    # Build contrast matrix for treatment effects at each FU level
+    n_contrasts <- length(fu_levels_numeric)
+    contrast_matrix <- matrix(0, nrow = ncol(design), ncol = n_contrasts)
+    rownames(contrast_matrix) <- colnames(design)
+    colnames(contrast_matrix) <- paste0("FU", fu_levels_numeric)
+
+    # Find the CONTROL_STATUS coefficient name
+    ctrl_coef <- grep("^CONTROL_STATUS", colnames(design), value = TRUE)
+    ctrl_coef <- ctrl_coef[!grepl(":", ctrl_coef)]  # Main effect, not interaction
+
+    if (length(ctrl_coef) == 1) {
+      for (i in seq_along(fu_levels_numeric)) {
+        fu_val <- fu_levels_numeric[i]
+        contrast_col <- paste0("FU", fu_val)
+
+        # Main effect of CONTROL_STATUS
+        contrast_matrix[ctrl_coef, contrast_col] <- 1
+
+        # Add interaction term if it exists (for FU > reference level)
+        interaction_coef <- grep(paste0("CONTROL_STATUS.*:.*FU.*factor", fu_val), colnames(design), value = TRUE)
+        if (length(interaction_coef) == 0) {
+          # Try alternative naming pattern
+          interaction_coef <- grep(paste0("CONTROL_STATUS.*:.*FU.*", fu_val), colnames(design), value = TRUE)
+        }
+        if (length(interaction_coef) == 1) {
+          contrast_matrix[interaction_coef, contrast_col] <- 1
+        }
+      }
+
+      # Apply contrasts
+      fit_contrasts <- contrasts.fit(fit, contrast_matrix)
+      fit_contrasts <- eBayes(fit_contrasts)
+
+      # Extract treatment effects (vectorized across analytes)
+      treatment_effects <- data.frame(
+        ANALYTE_NAME = character(n_analytes * n_contrasts),
+        FU = integer(n_analytes * n_contrasts),
+        EFFECT_SIZE = numeric(n_analytes * n_contrasts),
+        SE = numeric(n_analytes * n_contrasts),
+        P_VALUE = numeric(n_analytes * n_contrasts),
+        stringsAsFactors = FALSE
+      )
+
+      te_row_idx <- 0
+      for (i in seq_along(fu_levels_numeric)) {
+        fu_val <- fu_levels_numeric[i]
+        contrast_col <- paste0("FU", fu_val)
+
+        effect_sizes <- fit_contrasts$coefficients[, contrast_col]
+        ses <- fit_contrasts$stdev.unscaled[, contrast_col] * fit_contrasts$sigma
+        p_values <- fit_contrasts$p.value[, contrast_col]
+
+        for (j in seq_len(n_analytes)) {
+          te_row_idx <- te_row_idx + 1
+          treatment_effects$ANALYTE_NAME[te_row_idx] <- omics_df$ANALYTE_NAME[j]
+          treatment_effects$FU[te_row_idx] <- fu_val
+          treatment_effects$EFFECT_SIZE[te_row_idx] <- effect_sizes[j]
+          treatment_effects$SE[te_row_idx] <- ses[j]
+          treatment_effects$P_VALUE[te_row_idx] <- p_values[j]
+        }
+      }
+
+      treatment_effects <- treatment_effects[1:te_row_idx, ]
+    } else {
+      # No CONTROL_STATUS coefficient found (shouldn't happen)
+      warning("Could not find CONTROL_STATUS coefficient for treatment effects")
+      treatment_effects <- NULL
+    }
+
+    return(list(
+      coefficients = coefficients,
+      treatment_effects = treatment_effects
+    ))
 }
 
 
 .perform_analysis <- function(pheno_df, omics_df, omics_type, mixed_effects, additional_covariates = NULL) {
-  
+
   # STEP 1: Extract baseline data for all analysis functions
   pheno_baseline <- pheno_df[pheno_df$FU == 0, ]
   baseline_sample_ids <- pheno_baseline$SAMPLE_ID
   omics_baseline <- omics_df[, colnames(omics_df) %in% baseline_sample_ids, drop = FALSE]
-  
+
   # Filter to post-baseline analysis data (FU > 0)
   pheno_analysis <- pheno_df[pheno_df$FU != 0, ]
   omics_analysis <- omics_df
-  
+
   # STEP 2: Dispatch to appropriate analysis function
   if (omics_type == "DNAm") {
     # Limma handles both single and multiple FU cases
     results <- .perform_limma_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates, mixed_effects)
+
+    # Apply BH correction to both tables
+    if (!is.null(results)) {
+      if (!is.null(results$coefficients) && nrow(results$coefficients) > 0) {
+        results$coefficients <- .apply_multiple_testing_correction(
+          results$coefficients, group_col = "COEFFICIENT"
+        )
+        results$coefficients <- results$coefficients[
+          order(results$coefficients$ANALYTE_NAME, results$coefficients$COEFFICIENT),
+        ]
+      }
+
+      if (!is.null(results$treatment_effects) && nrow(results$treatment_effects) > 0) {
+        results$treatment_effects <- .apply_multiple_testing_correction(
+          results$treatment_effects, group_col = "FU"
+        )
+        results$treatment_effects <- results$treatment_effects[
+          order(results$treatment_effects$ANALYTE_NAME, results$treatment_effects$FU),
+        ]
+      }
+    }
+
+    return(results)
+
   } else {
     # Proteomics/Metabolomics - check if LM or LME4
     max_fu <- max(as.numeric(as.character(pheno_analysis$FU)), na.rm = TRUE)
@@ -523,15 +680,30 @@
       # Multiple follow-ups: use mixed effects
       results <- .perform_lme4_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates)
     }
+
+    # STEP 3: Apply multiple testing correction to both tables
+    if (!is.null(results)) {
+      # Correct coefficients (grouped by COEFFICIENT)
+      if (!is.null(results$coefficients) && nrow(results$coefficients) > 0) {
+        results$coefficients <- .apply_multiple_testing_correction(
+          results$coefficients, group_col = "COEFFICIENT"
+        )
+        results$coefficients <- results$coefficients[
+          order(results$coefficients$ANALYTE_NAME, results$coefficients$COEFFICIENT),
+        ]
+      }
+
+      # Correct treatment effects (grouped by FU)
+      if (!is.null(results$treatment_effects) && nrow(results$treatment_effects) > 0) {
+        results$treatment_effects <- .apply_multiple_testing_correction(
+          results$treatment_effects, group_col = "FU"
+        )
+        results$treatment_effects <- results$treatment_effects[
+          order(results$treatment_effects$ANALYTE_NAME, results$treatment_effects$FU),
+        ]
+      }
+    }
+
+    return(results)
   }
-  
-   # STEP 3: Apply multiple testing correction
-   if (!is.null(results) && nrow(results) > 0) {
-     results <- .apply_multiple_testing_correction(results)
-     
-     # Sort by ANALYTE_NAME first, then COEFFICIENT for consistent ordering
-     results <- results[order(results$ANALYTE_NAME, results$COEFFICIENT), ]
-   }
-   
-   return(results)
 }

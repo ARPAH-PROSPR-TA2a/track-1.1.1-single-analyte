@@ -59,9 +59,11 @@ source("analysis_helpers.R")
       pheno_list$requires_mixed_effects,
       additional_covariates
     )
-    
+
+    # analysis_results is now a list with coefficients and treatment_effects
     outputs[[dataset]] <- list(
-      results = analysis_results,
+      coefficients = analysis_results$coefficients,
+      treatment_effects = analysis_results$treatment_effects,
       omics_summary = omics_report,
       pheno_summary = pheno_report,
       covariates_summary = covariates_report,
