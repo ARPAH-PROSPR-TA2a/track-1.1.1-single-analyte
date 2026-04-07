@@ -2,6 +2,44 @@ source("validation_helpers.R")
 source("reporting_helpers.R")
 source("analysis_helpers.R")
 
+# Helper function to add BH_P_VALUE_FILTERED column to a results data frame
+# Applies BH correction only to probes in filtered_probes, NA for others
+.add_filtered_bh_column <- function(df, filtered_probes, group_col) {
+  if (is.null(df) || nrow(df) == 0) {
+    return(df)
+  }
+
+  df$BH_P_VALUE_FILTERED <- NA_real_
+
+  for (grp in unique(df[[group_col]])) {
+    # Subset to this group AND filtered probes
+    idx <- which(df[[group_col]] == grp & df$ANALYTE_NAME %in% filtered_probes)
+    if (length(idx) > 0) {
+      df$BH_P_VALUE_FILTERED[idx] <- p.adjust(df$P_VALUE[idx], method = "BH")
+    }
+  }
+
+  return(df)
+}
+
+# Helper function to add filtered BH correction to all strata
+.add_filtered_bh_correction <- function(outputs, filtered_probes) {
+  for (stratum in c("all", "male", "female")) {
+    if (is.null(outputs[[stratum]])) next
+
+    # Add column to coefficients
+    outputs[[stratum]]$coefficients <- .add_filtered_bh_column(
+      outputs[[stratum]]$coefficients, filtered_probes, group_col = "COEFFICIENT"
+    )
+
+    # Add column to treatment_effects
+    outputs[[stratum]]$treatment_effects <- .add_filtered_bh_column(
+      outputs[[stratum]]$treatment_effects, filtered_probes, group_col = "FU"
+    )
+  }
+  return(outputs)
+}
+
 # Helper function to subset omics data to a specific set of analytes
 .subset_omics_list <- function(omics_list, analyte_subset) {
   if (is.null(analyte_subset)) {
@@ -88,10 +126,10 @@ FAST_omics_WAS <- function(pheno,
     # Load probe lists for DNAm analysis
     full_probes <- readRDS("Data/FAST_epicv1_epicv2_probe_list.rds")
     filtered_probes <- readRDS("Data/FAST_epicv1_epicv2_sugden_TruD_probe_list.rds")
-    
+
     # Check probe coverage against available data
     available_probes <- omics_list$all$ANALYTE_NAME
-    
+
     full_present <- sum(full_probes %in% available_probes)
     full_missing <- length(full_probes) - full_present
     if (full_present == 0) {
@@ -101,7 +139,7 @@ FAST_omics_WAS <- function(pheno,
       warning(sprintf("%d of %d probes from full probe list not found in data",
                       full_missing, length(full_probes)))
     }
-    
+
     filtered_present <- sum(filtered_probes %in% available_probes)
     filtered_missing <- length(filtered_probes) - filtered_present
     if (filtered_present == 0) {
@@ -111,14 +149,14 @@ FAST_omics_WAS <- function(pheno,
       warning(sprintf("%d of %d probes from filtered probe list not found in data",
                       filtered_missing, length(filtered_probes)))
     }
-    
-    # Run analysis for each probe set
-    outputs <- list(
-      full = .run_stratified_analysis(pheno_list, omics_list, omics_type,
-                                      additional_covariates, full_probes),
-      filtered = .run_stratified_analysis(pheno_list, omics_list, omics_type,
-                                          additional_covariates, filtered_probes)
-    )
+
+    # Run analysis ONCE on full probes (LIMMA benefits from borrowing info across all probes)
+    outputs <- .run_stratified_analysis(pheno_list, omics_list, omics_type,
+                                        additional_covariates, full_probes)
+
+    # Add BH_P_VALUE_FILTERED column (BH correction on filtered probes only)
+    outputs <- .add_filtered_bh_correction(outputs, filtered_probes)
+
   } else {
     # Proteomics/Metabolomics: single analysis with all analytes
     outputs <- .run_stratified_analysis(pheno_list, omics_list, omics_type,

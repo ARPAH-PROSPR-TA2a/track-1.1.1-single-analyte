@@ -8,3 +8,4 @@ analysis_from_richard.R
 test_comprehensive.R
 compare_methods.R
 nihms-1769080.pdf
+plot_results.R
