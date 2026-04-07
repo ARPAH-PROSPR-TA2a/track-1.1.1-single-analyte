@@ -19,8 +19,46 @@
 }
 
 
+# Prepares data for analysis by matching samples between pheno and omics,
+# and computing the mapping from FU samples to their baseline values.
+# Used by .perform_lm_analysis(), .perform_lme4_analysis(), and .perform_limma_analysis()
+.prepare_analysis_data <- function(pheno_df, omics_df, pheno_baseline, omics_baseline) {
+
+  # Get sample IDs from omics (exclude ANALYTE_NAME column)
+  omics_sample_ids <- colnames(omics_df)[-which(colnames(omics_df) == "ANALYTE_NAME")]
+
+  # Find shared samples between pheno and omics
+  shared_samples <- intersect(pheno_df$SAMPLE_ID, omics_sample_ids)
+
+  # Filter pheno to shared samples
+  pheno_merged <- pheno_df[pheno_df$SAMPLE_ID %in% shared_samples, ]
+
+  # Baseline subject IDs for lookup
+  baseline_subject_ids <- pheno_baseline$SUBJECT_ID
+
+  # Convert omics_baseline to matrix for efficient numeric indexing
+  # (avoids issues with duplicate column names when indexing with vectors)
+  omics_baseline_matrix <- as.matrix(omics_baseline)
+
+  # Map each sample in pheno_merged to its baseline:
+  # 1. Find which row in pheno_baseline has the same SUBJECT_ID
+  # 2. Get that row's SAMPLE_ID
+  # 3. Find which column in omics_baseline_matrix that corresponds to
+  sample_subjects <- pheno_merged$SUBJECT_ID
+  baseline_idx <- match(sample_subjects, baseline_subject_ids)
+  baseline_col_idx <- match(pheno_baseline$SAMPLE_ID[baseline_idx], colnames(omics_baseline_matrix))
+
+  list(
+    pheno_merged = pheno_merged,
+    shared_samples = shared_samples,
+    baseline_col_idx = baseline_col_idx,
+    omics_baseline_matrix = omics_baseline_matrix
+  )
+}
+
+
 .create_randomization_report <- function(pheno_df, omics_df) {
-  
+
   # Filter to baseline (FU=0)
   pheno_baseline <- pheno_df[pheno_df$FU == 0, ]
   
@@ -130,53 +168,39 @@
       P_VALUE = numeric(),
       stringsAsFactors = FALSE
     )
-   
-   # Get sample IDs from omics (exclude ANALYTE_NAME column)
-   omics_sample_ids <- colnames(omics_df)[-which(colnames(omics_df) == "ANALYTE_NAME")]
-   
-   # Filter pheno to shared samples
-   shared_samples <- intersect(pheno_df$SAMPLE_ID, omics_sample_ids)
-   pheno_merged <- pheno_df[pheno_df$SAMPLE_ID %in% shared_samples, ]
 
-    # Baseline data for lookup
-    baseline_subject_ids <- pheno_baseline$SUBJECT_ID
-    
-    # Convert omics_baseline to matrix for efficient numeric indexing
-    # (avoids issues with duplicate column names when indexing with vectors)
-    omics_baseline_matrix <- as.matrix(omics_baseline)
-    
+    # Prepare data using shared helper
+    prep <- .prepare_analysis_data(pheno_df, omics_df, pheno_baseline, omics_baseline)
+    pheno_merged <- prep$pheno_merged
+    shared_samples <- prep$shared_samples
+    baseline_col_idx <- prep$baseline_col_idx
+    omics_baseline_matrix <- prep$omics_baseline_matrix
+
     # Pre-allocate model data template (avoid copying in loop)
     model_data <- data.frame(pheno_merged)
     model_data$analyte <- NA_real_
     model_data$analyte_baseline <- NA_real_
-    
+
     # Build model formula
     # analyte ~ CONTROL_STATUS + FEMALE + baseline_analyte + covariates
     covariate_terms <- c("FEMALE", "analyte_baseline")
     if (!is.null(additional_covariates)) {
       covariate_terms <- c(covariate_terms, additional_covariates)
     }
-    
+
     # Exclude FEMALE if it has only one level
     if (length(unique(model_data$FEMALE)) == 1) {
       covariate_terms <- setdiff(covariate_terms, "FEMALE")
     }
-    
+
     formula_str <- "analyte ~ CONTROL_STATUS"
     if (length(covariate_terms) > 0) {
       formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
     }
-    
+
     # Pre-compute loop invariants
     analyte_names <- omics_df$ANALYTE_NAME
-    sample_subjects <- pheno_merged$SUBJECT_ID
-    baseline_idx <- match(sample_subjects, baseline_subject_ids)
-    
-    # Map baseline indices to column positions for omics_baseline_matrix indexing
-    # Note: baseline_idx contains row positions in pheno_baseline;
-    # we need to convert these to column positions in omics_baseline_matrix
-    baseline_col_idx <- match(pheno_baseline$SAMPLE_ID[baseline_idx], colnames(omics_baseline_matrix))
-    
+
     # Get FU level for this analysis (should be single value in LM analysis)
     fu_level <- unique(pheno_merged$FU)
     if (length(fu_level) != 1) {
@@ -286,58 +310,41 @@
       P_VALUE = numeric(),
       stringsAsFactors = FALSE
     )
-    
-    # Get sample IDs from omics (exclude ANALYTE_NAME column)
-   omics_sample_ids <- colnames(omics_df)[-which(colnames(omics_df) == "ANALYTE_NAME")]
-   
-   # Filter pheno to shared samples
-   shared_samples <- intersect(pheno_df$SAMPLE_ID, omics_sample_ids)
-   pheno_merged <- pheno_df[pheno_df$SAMPLE_ID %in% shared_samples, ]
-   
-   # Get FU levels present in data
-   fu_levels <- sort(unique(pheno_merged$FU))
-   
-   # Baseline data for lookup
-   baseline_subject_ids <- pheno_baseline$SUBJECT_ID
-   
-   # Convert omics_baseline to matrix for efficient numeric indexing
-   # (avoids issues with duplicate column names when indexing with vectors)
-   omics_baseline_matrix <- as.matrix(omics_baseline)
-   
-   # Pre-allocate model data template (avoid copying in loop)
-   model_data <- data.frame(pheno_merged)
-   model_data$analyte <- NA_real_
-   model_data$analyte_baseline <- NA_real_
-   
-      # Build model formula
-      # analyte ~ CONTROL_STATUS * factor(FU) + FEMALE + baseline_analyte + covariates + (1|SUBJECT_ID)
-      # Extracts ALL fixed effect coefficients from the model
-      covariate_terms <- c("FEMALE", "analyte_baseline")
-     if (!is.null(additional_covariates)) {
-       covariate_terms <- c(covariate_terms, additional_covariates)
-     }
-     
-     # Exclude FEMALE if it has only one level
-     if (length(unique(model_data$FEMALE)) == 1) {
-       covariate_terms <- setdiff(covariate_terms, "FEMALE")
-     }
-     
-      formula_str <- "analyte ~ CONTROL_STATUS * FU"
-      if (length(covariate_terms) > 0) {
-        formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
-      }
-      formula_str <- paste(formula_str, "+ (1|SUBJECT_ID)")
-    
+
+    # Prepare data using shared helper
+    prep <- .prepare_analysis_data(pheno_df, omics_df, pheno_baseline, omics_baseline)
+    pheno_merged <- prep$pheno_merged
+    shared_samples <- prep$shared_samples
+    baseline_col_idx <- prep$baseline_col_idx
+    omics_baseline_matrix <- prep$omics_baseline_matrix
+
+    # Pre-allocate model data template (avoid copying in loop)
+    model_data <- data.frame(pheno_merged)
+    model_data$analyte <- NA_real_
+    model_data$analyte_baseline <- NA_real_
+
+    # Build model formula
+    # analyte ~ CONTROL_STATUS * factor(FU) + FEMALE + baseline_analyte + covariates + (1|SUBJECT_ID)
+    # Extracts ALL fixed effect coefficients from the model
+    covariate_terms <- c("FEMALE", "analyte_baseline")
+    if (!is.null(additional_covariates)) {
+      covariate_terms <- c(covariate_terms, additional_covariates)
+    }
+
+    # Exclude FEMALE if it has only one level
+    if (length(unique(model_data$FEMALE)) == 1) {
+      covariate_terms <- setdiff(covariate_terms, "FEMALE")
+    }
+
+    formula_str <- "analyte ~ CONTROL_STATUS * FU"
+    if (length(covariate_terms) > 0) {
+      formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
+    }
+    formula_str <- paste(formula_str, "+ (1|SUBJECT_ID)")
+
     # Pre-compute loop invariants
     analyte_names <- omics_df$ANALYTE_NAME
-    sample_subjects <- pheno_merged$SUBJECT_ID
-    baseline_idx <- match(sample_subjects, baseline_subject_ids)
-    
-    # Map baseline indices to column positions for omics_baseline_matrix indexing
-    # Note: baseline_idx contains row positions in pheno_baseline;
-    # we need to convert these to column positions in omics_baseline_matrix
-    baseline_col_idx <- match(pheno_baseline$SAMPLE_ID[baseline_idx], colnames(omics_baseline_matrix))
-    
+
     # Fit model for each analyte
     for (i in seq_along(analyte_names)) {
       tryCatch({
@@ -422,44 +429,30 @@
 
 
 .perform_limma_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL, requires_mixed_effects) {
-   
+
    # Limma analysis for DNAm (DNA methylation) data
    # Vectorized approach: fits all FU levels simultaneously for speed with high-dimensional data
    # Uses empirical Bayes moderation for variance estimation (appropriate for 1M+ analytes)
-   
+
    require(limma)
-   
-   # Get sample IDs from omics (exclude ANALYTE_NAME column)
-   omics_sample_ids <- colnames(omics_df)[-which(colnames(omics_df) == "ANALYTE_NAME")]
-   
-   # Filter pheno to shared samples
-   shared_samples <- intersect(pheno_df$SAMPLE_ID, omics_sample_ids)
-   pheno_merged <- pheno_df[pheno_df$SAMPLE_ID %in% shared_samples, ]
-   
-   # Get FU levels present in data
-   fu_levels <- sort(unique(pheno_merged$FU))
-   
-   # Baseline data for lookup
-   baseline_subject_ids <- pheno_baseline$SUBJECT_ID
-   
-   # Convert omics_baseline to matrix for efficient numeric indexing
-   omics_baseline_matrix <- as.matrix(omics_baseline)
-   
+
+   # Prepare data using shared helper
+   prep <- .prepare_analysis_data(pheno_df, omics_df, pheno_baseline, omics_baseline)
+   pheno_merged <- prep$pheno_merged
+   shared_samples <- prep$shared_samples
+   baseline_col_idx <- prep$baseline_col_idx
+   omics_baseline_matrix <- prep$omics_baseline_matrix
+
    # Convert full omics data to matrix (analytes × samples)
    omics_values <- as.matrix(omics_df[, shared_samples])
-   
-   # Pre-compute baseline values for each sample using numeric indexing (O(1) vs O(S×N))
-   sample_subjects <- pheno_merged$SUBJECT_ID
-   baseline_idx <- match(sample_subjects, baseline_subject_ids)
-   baseline_col_idx <- match(pheno_baseline$SAMPLE_ID[baseline_idx], colnames(omics_baseline_matrix))
-   
+
    # Get baseline values as matrix (analytes × samples)
    omics_baseline_merged <- omics_baseline_matrix[, baseline_col_idx, drop = FALSE]
-   
-    # Compute change scores vectorized: analyte_change is (n_analytes × n_samples) matrix
-    analyte_change <- omics_values - omics_baseline_merged
-    
-     # Build design matrix based on FU structure
+
+   # Compute change scores vectorized: analyte_change is (n_analytes × n_samples) matrix
+   analyte_change <- omics_values - omics_baseline_merged
+
+   # Build design matrix based on FU structure
      if (requires_mixed_effects) {
        message("LIMMA: Multiple FU - using full model with FU effects")
        pheno_merged$FU_factor <- factor(pheno_merged$FU)
@@ -706,4 +699,110 @@
 
     return(results)
   }
+}
+
+
+# Helper function to add BH_P_VALUE_FILTERED column to a results data frame
+# Applies BH correction only to probes in filtered_probes, NA for others
+.add_filtered_bh_column <- function(df, filtered_probes, group_col) {
+  if (is.null(df) || nrow(df) == 0) {
+    return(df)
+  }
+
+  df$BH_P_VALUE_FILTERED <- NA_real_
+
+  for (grp in unique(df[[group_col]])) {
+    # Subset to this group AND filtered probes
+    idx <- which(df[[group_col]] == grp & df$ANALYTE_NAME %in% filtered_probes)
+    if (length(idx) > 0) {
+      df$BH_P_VALUE_FILTERED[idx] <- p.adjust(df$P_VALUE[idx], method = "BH")
+    }
+  }
+
+  return(df)
+}
+
+
+# Helper function to add filtered BH correction to all strata
+.add_filtered_bh_correction <- function(outputs, filtered_probes) {
+  for (stratum in c("all", "male", "female")) {
+    if (is.null(outputs[[stratum]])) next
+
+    # Add column to coefficients
+    outputs[[stratum]]$coefficients <- .add_filtered_bh_column(
+      outputs[[stratum]]$coefficients, filtered_probes, group_col = "COEFFICIENT"
+    )
+
+    # Add column to treatment_effects
+    outputs[[stratum]]$treatment_effects <- .add_filtered_bh_column(
+      outputs[[stratum]]$treatment_effects, filtered_probes, group_col = "FU"
+    )
+  }
+  return(outputs)
+}
+
+
+# Helper function to run analysis across all strata (all, male, female)
+.run_stratified_analysis <- function(pheno_list, omics_list, omics_type,
+                                     additional_covariates) {
+
+  # DNAm-specific: load probe lists, validate coverage, subset to full probes
+  filtered_probes <- NULL
+  if (omics_type == "DNAm") {
+    full_probes <- readRDS("Data/FAST_epicv1_epicv2_probe_list.rds")
+    filtered_probes <- readRDS("Data/FAST_epicv1_epicv2_sugden_TruD_probe_list.rds")
+
+    available_probes <- omics_list$all$ANALYTE_NAME
+    .validate_dnam_probe_coverage(full_probes, filtered_probes, available_probes)
+
+    omics_list <- .subset_omics_list(omics_list, full_probes)
+  }
+
+  outputs <- list(all = NULL, male = NULL, female = NULL)
+
+  for (dataset in c("all", "male", "female")) {
+
+    if (is.null(pheno_list[[dataset]])) {
+      next
+    }
+
+    # Generate data summary reports
+    pheno_report <- .create_pheno_data_report(pheno_list[[dataset]])
+    omics_report <- .create_omics_data_report(omics_list[[dataset]])
+
+    if (!is.null(additional_covariates)) {
+      covariates_report <- .create_addx_covariate_report(pheno_list[[dataset]], additional_covariates)
+    } else {
+      covariates_report <- NULL
+    }
+
+    # Run randomization analysis
+    randomization_report <- .create_randomization_report(pheno_list[[dataset]], omics_list[[dataset]])
+
+    # Perform omics-wide association analysis
+    analysis_results <- .perform_analysis(
+      pheno_list[[dataset]],
+      omics_list[[dataset]],
+      omics_type,
+      pheno_list$requires_mixed_effects,
+      additional_covariates
+    )
+
+    # analysis_results is now a list with coefficients and treatment_effects
+    outputs[[dataset]] <- list(
+      coefficients = analysis_results$coefficients,
+      treatment_effects = analysis_results$treatment_effects,
+      omics_summary = omics_report,
+      pheno_summary = pheno_report,
+      covariates_summary = covariates_report,
+      randomization_summary = randomization_report
+    )
+  }
+
+  # DNAm-specific: add BH_P_VALUE_FILTERED column
+  if (omics_type == "DNAm") {
+    outputs <- .add_filtered_bh_correction(outputs, filtered_probes)
+  }
+
+  return(outputs)
 }
