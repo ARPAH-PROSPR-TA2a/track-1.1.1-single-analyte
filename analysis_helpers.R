@@ -202,6 +202,7 @@
 
     # Load required packages
     require(lme4)
+    require(lmerTest)
     require(emmeans)
 
     # Initialize results - raw coefficients
@@ -278,25 +279,17 @@
         model_data$analyte_baseline <- baseline_vals
         
          # Fit lmer model
-         fit <- lmer(as.formula(formula_str), data = model_data, REML = FALSE)
-        
-        # Extract coefficients directly from summary
+         fit <- lmerTest::lmer(as.formula(formula_str), data = model_data, REML = FALSE)
+
+        # Extract coefficients with Satterthwaite p-values
         fit_summary <- summary(fit)
         coef_table <- fit_summary$coefficients
-        
-        # Compute degrees of freedom for p-values
-        # Using approximation: df = nrow(model_data) - number of fixed effects
-        n_fixed_effects <- nrow(coef_table)
-        df_approx <- nrow(model_data) - n_fixed_effects
-        
+
         # Extract all fixed effect coefficients
         for (coef_name in rownames(coef_table)) {
-          # Extract coefficient info
           effect_size <- coef_table[coef_name, "Estimate"]
           se <- coef_table[coef_name, "Std. Error"]
-          t_stat <- coef_table[coef_name, "t value"]
-          # Compute p-value from t-statistic
-          p_value <- 2 * pt(-abs(t_stat), df = df_approx)
+          p_value <- coef_table[coef_name, "Pr(>|t|)"]
 
           coefficients <- rbind(coefficients, data.frame(
             ANALYTE_NAME = analyte_name,
@@ -423,7 +416,7 @@
     
     row_idx <- 0
     
-    # Extract all fixed effect coefficients (except intercept)
+    # Extract all fixed effect coefficients (including intercept)
     coef_names <- colnames(design)
     
     for (coef_name in coef_names) {
