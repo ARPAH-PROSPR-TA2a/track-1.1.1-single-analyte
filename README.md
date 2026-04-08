@@ -188,6 +188,35 @@ Is omics_type == "DNAm"?
 For comprehensive examples and detailed documentation of the analysis
 pipeline, see [CODE_WALKTHROUGH_v2.md](CODE_WALKTHROUGH_v2.md).
 
+## Plotting Results
+
+The pipeline includes plotting functions for visualizing treatment effects.
+Source `plotting_helpers.R` and call `generate_all_plots()` on your results:
+
+``` r
+source("plotting_helpers.R")
+
+results <- FAST_omics_WAS(pheno, omics, omics_type = "DNAm",
+                          additional_covariates = c("age", "bmi"))
+
+generate_all_plots(results)                        # saves to Figures/
+generate_all_plots(results, figures_dir = "my_dir") # saves to my_dir/
+```
+
+This auto-detects all dimensions of your results (strata, FU levels,
+filtered probes) and outputs multi-page PDFs. For DNAm results, both
+full and filtered probe set plots are generated.
+
+Two plot types are produced:
+
+-   **QQ plots**: Observed vs expected p-value distributions (via `qqman`)
+-   **Volcano plots**: Effect size vs significance, with Up/Down/Not
+    significant coloring based on BH-corrected p-values (via `ggplot2`)
+
+Requires packages: `qqman`, `ggplot2`.
+
+## Contact
+
 For any bugs or issues running the program, please feel free to submit
 an Issue in this repository or email Will Marella at
 [wm2530\@cumc.columbia.edu](mailto:wm2530@cumc.columbia.edu)
