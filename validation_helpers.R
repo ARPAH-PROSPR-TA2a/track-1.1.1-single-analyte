@@ -243,3 +243,49 @@
     female = omics_female
   )
 }
+
+
+# Helper function to validate DNAm probe coverage against available data
+.validate_dnam_probe_coverage <- function(full_probes, filtered_probes, available_probes) {
+  full_present <- sum(full_probes %in% available_probes)
+  full_missing <- length(full_probes) - full_present
+  if (full_present == 0) {
+    stop("No probes from full probe list found in data")
+  }
+  if (full_missing > 0) {
+    warning(sprintf("%d of %d probes from full probe list not found in data",
+                    full_missing, length(full_probes)))
+  }
+
+  filtered_present <- sum(filtered_probes %in% available_probes)
+  filtered_missing <- length(filtered_probes) - filtered_present
+  if (filtered_present == 0) {
+    stop("No probes from filtered probe list found in data")
+  }
+  if (filtered_missing > 0) {
+    warning(sprintf("%d of %d probes from filtered probe list not found in data",
+                    filtered_missing, length(filtered_probes)))
+  }
+}
+
+
+# Helper function to subset omics data to a specific set of analytes
+.subset_omics_list <- function(omics_list, analyte_subset) {
+  if (is.null(analyte_subset)) {
+    return(omics_list)
+  }
+
+  subsetted <- list()
+  for (dataset in c("all", "male", "female")) {
+    if (is.null(omics_list[[dataset]])) {
+      subsetted[[dataset]] <- NULL
+      next
+    }
+
+    omics_df <- omics_list[[dataset]]
+    matching_analytes <- omics_df$ANALYTE_NAME %in% analyte_subset
+    subsetted[[dataset]] <- omics_df[matching_analytes, ]
+  }
+
+  return(subsetted)
+}
