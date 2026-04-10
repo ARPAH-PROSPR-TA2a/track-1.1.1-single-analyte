@@ -83,10 +83,13 @@ Each stratum contains:
     analyte (ANALYTE_NAME, COEFFICIENT, EFFECT_SIZE, SE, P_VALUE, BH_P_VALUE)
 -   **`$treatment_effects`**: Data frame of treatment effects at each
     follow-up level (ANALYTE_NAME, FU, EFFECT_SIZE, SE, P_VALUE, BH_P_VALUE)
--   **`$pheno_summary`**: Sample size, sex, treatment, and timepoint breakdowns
--   **`$omics_summary`**: Per-analyte summary statistics
--   **`$covariates_summary`**: Summary of additional covariates (NULL if
-    no additional covariates provided)
+-   **`$pheno_summary`**: Data frame with one row per (FU, FEMALE) cell
+    giving N_SUBJECTS, N_CONTROL, N_TREATMENT (subject-level) and
+    N_SAMPLES (row-level)
+-   **`$omics_summary`**: Per-analyte summary statistics at baseline
+    (FU=0), as a pre-treatment reference distribution
+-   **`$covariates_summary`**: Summary of additional covariates at
+    baseline (FU=0); NULL if no additional covariates provided
 -   **`$randomization_summary`**: Baseline balance check per analyte
     (Welch's t-test comparing treatment groups)
 

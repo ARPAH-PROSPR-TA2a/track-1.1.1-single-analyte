@@ -674,7 +674,7 @@
 
     # Generate data summary reports
     pheno_report <- .create_pheno_data_report(pheno_list[[dataset]])
-    omics_report <- .create_omics_data_report(omics_list[[dataset]])
+    omics_report <- .create_omics_data_report(pheno_list[[dataset]], omics_list[[dataset]])
 
     if (!is.null(additional_covariates)) {
       covariates_report <- .create_addx_covariate_report(pheno_list[[dataset]], additional_covariates)
