@@ -7,14 +7,25 @@
 
 
 .validate_omics_type <- function(omics_type){
-  
+
   acceptable_types <- c("DNAm", "Proteomics", "Metabolomics")
-  
+
   if (!omics_type %in% acceptable_types) {
     stop(
       "Invalid omics_type '", omics_type, "'. ",
       "Must be one of: ", paste(acceptable_types, collapse = ", ")
     )
+  }
+
+  # Reminders about expected input format. These are not data checks --
+  # the pipeline cannot tell whether values have been pre-processed
+  # correctly -- they exist so the caller is reminded of the convention.
+  if (omics_type == "DNAm") {
+    message("DNAm: input should be beta values.")
+  } else if (omics_type == "Metabolomics") {
+    message("Metabolomics: inputs should be log2-transformed prior to analysis.")
+  } else if (omics_type == "Proteomics") {
+    message("Proteomics: inputs should be log2-transformed prior to analysis.")
   }
 }
 
