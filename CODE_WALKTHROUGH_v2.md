@@ -67,9 +67,9 @@ A list with three elements (all, male, female), each containing:
 list(
   coefficients = data.frame(...),         # All model coefficients
   treatment_effects = data.frame(...),    # Treatment effects at each FU
-  omics_summary = omics_report,           # Summary of analytes
-  pheno_summary = pheno_report,           # Sample size, sex, treatment, timepoint
-  covariates_summary = covariates_report, # Covariate distributions
+  omics_summary = omics_report,           # Per-analyte summary at baseline (FU=0)
+  pheno_summary = pheno_report,           # Subject/sample counts per (FU, FEMALE) cell
+  covariates_summary = covariates_report, # Covariate distributions at baseline (FU=0)
   randomization_summary = randomization_report  # Baseline balance check
 )
 ```
@@ -361,15 +361,15 @@ Four reports generated for each stratum:
 
 ### `.create_pheno_data_report(pheno_df)`
 
-Returns: N_SAMPLES, N_SUBJECTS, N_FEMALE, N_MALE, N_CONTROL, N_TREATMENT, N_SAMPLES_FU0, N_SAMPLES_FU1, ...
+Returns a data frame with one row per (FU, FEMALE) cell. Columns: FU, FEMALE, N_SUBJECTS, N_CONTROL, N_TREATMENT, N_SAMPLES. Subject-level counts dedupe by SUBJECT_ID; N_SAMPLES is row-level so technical replicates remain visible.
 
-### `.create_omics_data_report(omics_df)`
+### `.create_omics_data_report(pheno_df, omics_df)`
 
-Per-analyte: N_NONMISSING, MEAN, MEDIAN, SD, MIN, MAX
+Per-analyte at baseline (FU=0), as a pre-treatment reference distribution: N_NONMISSING, MEAN, MEDIAN, SD, MIN, MAX
 
 ### `.create_addx_covariate_report(pheno_df, covariate_names)`
 
-Per-covariate: TYPE, N_NA, SUMMARY (type-specific statistics)
+Per-covariate at baseline (FU=0), as a pre-treatment reference distribution: TYPE, N_NA, SUMMARY (type-specific statistics)
 
 ### `.create_randomization_report(pheno_df, omics_df)`
 

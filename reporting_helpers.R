@@ -1,30 +1,47 @@
 .create_pheno_data_report <- function(pheno_df) {
-  
-  # Basic counts
-  report <- list(
-    N_SAMPLES = nrow(pheno_df),
-    N_SUBJECTS = length(unique(pheno_df$SUBJECT_ID)),
-    N_FEMALE = sum(pheno_df$FEMALE == 1),
-    N_MALE = sum(pheno_df$FEMALE == 0),
-    N_CONTROL = sum(pheno_df$CONTROL_STATUS == 0),
-    N_TREATMENT = sum(pheno_df$CONTROL_STATUS == 1)
+
+  # One row per (FU, FEMALE) cell. Subject-level counts (N_SUBJECTS,
+  # N_CONTROL, N_TREATMENT) dedupe by SUBJECT_ID so multiple samples for
+  # the same person at the same FU don't inflate the totals. N_SAMPLES
+  # is row-level so the difference between people present and samples
+  # collected stays visible.
+  groups <- unique(pheno_df[, c("FU", "FEMALE")])
+  groups <- groups[order(groups$FU, groups$FEMALE), , drop = FALSE]
+
+  report <- data.frame(
+    FU          = groups$FU,
+    FEMALE      = groups$FEMALE,
+    N_SUBJECTS  = NA_integer_,
+    N_CONTROL   = NA_integer_,
+    N_TREATMENT = NA_integer_,
+    N_SAMPLES   = NA_integer_,
+    stringsAsFactors = FALSE
   )
-  
-  # Follow-up counts (only for FU levels present in data)
-  fu_levels <- sort(unique(pheno_df$FU))
-  for (fu in fu_levels) {
-    report[[paste0("N_SAMPLES_FU", fu)]] <- sum(pheno_df$FU == fu)
+
+  for (i in seq_len(nrow(report))) {
+    cell <- pheno_df[pheno_df$FU == report$FU[i] &
+                       pheno_df$FEMALE == report$FEMALE[i], ]
+    report$N_SUBJECTS[i]  <- length(unique(cell$SUBJECT_ID))
+    report$N_CONTROL[i]   <- length(unique(cell$SUBJECT_ID[cell$CONTROL_STATUS == 0]))
+    report$N_TREATMENT[i] <- length(unique(cell$SUBJECT_ID[cell$CONTROL_STATUS == 1]))
+    report$N_SAMPLES[i]   <- nrow(cell)
   }
-  
-  return(report)
+
+  rownames(report) <- NULL
+  report
 }
 
 
-.create_omics_data_report <- function(omics_df) {
-  
+.create_omics_data_report <- function(pheno_df, omics_df) {
+
+  # Restrict to baseline (FU=0) samples so the report describes the
+  # pre-treatment reference distribution for each analyte.
+  baseline_sample_ids <- pheno_df$SAMPLE_ID[pheno_df$FU == 0]
+
   analyte_names <- omics_df$ANALYTE_NAME
-  
+
   omics_numeric <- omics_df[, setdiff(names(omics_df), "ANALYTE_NAME"), drop = FALSE]
+  omics_numeric <- omics_numeric[, colnames(omics_numeric) %in% baseline_sample_ids, drop = FALSE]
   
   # Initialize results data.frame
   report <- data.frame(
@@ -55,12 +72,16 @@
 
 
 .create_addx_covariate_report <- function(pheno_df, covariate_names) {
-   
+
    # Handle NULL or empty covariate_names
    if (is.null(covariate_names) || length(covariate_names) == 0) {
      return(NULL)
    }
-   
+
+   # Restrict to baseline (FU=0) samples so the report describes the
+   # pre-treatment reference distribution for each covariate.
+   pheno_df <- pheno_df[pheno_df$FU == 0, ]
+
    # Initialize results list to build then convert to data.frame
    results_list <- list(
      COVARIATE_NAME = character(),
