@@ -21,7 +21,7 @@
 
 # Prepares data for analysis by matching samples between pheno and omics,
 # and computing the mapping from FU samples to their baseline values.
-# Used by .perform_lm_analysis(), .perform_lme4_analysis(), and .perform_limma_analysis()
+# Used by .perform_lm_analysis() and .perform_lme4_analysis()
 .prepare_analysis_data <- function(pheno_df, omics_df, pheno_baseline, omics_baseline) {
 
   # Get sample IDs from omics (exclude ANALYTE_NAME column)
