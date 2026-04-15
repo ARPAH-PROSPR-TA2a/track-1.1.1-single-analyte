@@ -136,19 +136,16 @@
         # Get baseline analyte values using column position indexing
         # (avoids issues with duplicate column names)
         baseline_vals <- omics_baseline_matrix[i, baseline_col_idx]
-       
-        # Compute change scores (on-the-fly)
-        analyte_change <- fu_values - baseline_vals
-        
+
         # Update model data with current analyte values
         # response_type determines whether we model change or absolute level
         if (match.arg(response_type) == "change") {
-          model_data$analyte <- analyte_change
+          model_data$analyte <- fu_values - baseline_vals
         } else {
           model_data$analyte <- fu_values
         }
         model_data$analyte_baseline <- baseline_vals
-        
+
          # Fit linear model
          fit <- lm(as.formula(formula_str), data = model_data)
          fit_summary <- summary(fit)
@@ -275,19 +272,16 @@
         # Get baseline analyte values using column position indexing
         # (avoids issues with duplicate column names)
         baseline_vals <- omics_baseline_matrix[i, baseline_col_idx]
-       
-        # Compute change scores (on-the-fly)
-        analyte_change <- fu_values - baseline_vals
-        
+
         # Update model data with current analyte values
         # response_type determines whether we model change or absolute level
         if (match.arg(response_type) == "change") {
-          model_data$analyte <- analyte_change
+          model_data$analyte <- fu_values - baseline_vals
         } else {
           model_data$analyte <- fu_values
         }
         model_data$analyte_baseline <- baseline_vals
-        
+
          # Fit lmer model
          fit <- lmerTest::lmer(as.formula(formula_str), data = model_data, REML = FALSE)
 
