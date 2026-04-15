@@ -57,7 +57,7 @@
 }
 
 
-.perform_lm_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL) {
+.perform_lm_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL, response_type = c("change", "level")) {
 
     # Linear regression for single follow-up timepoint only
     # Extracts ALL fixed effect coefficients (treatment, covariates)
@@ -141,7 +141,12 @@
         analyte_change <- fu_values - baseline_vals
         
         # Update model data with current analyte values
-        model_data$analyte <- analyte_change
+        # response_type determines whether we model change or absolute level
+        if (match.arg(response_type) == "change") {
+          model_data$analyte <- analyte_change
+        } else {
+          model_data$analyte <- fu_values
+        }
         model_data$analyte_baseline <- baseline_vals
         
          # Fit linear model
@@ -198,7 +203,7 @@
 }
 
 
-.perform_lme4_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL) {
+.perform_lme4_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL, response_type = c("change", "level")) {
 
     # Load required packages
     require(lme4)
@@ -275,7 +280,12 @@
         analyte_change <- fu_values - baseline_vals
         
         # Update model data with current analyte values
-        model_data$analyte <- analyte_change
+        # response_type determines whether we model change or absolute level
+        if (match.arg(response_type) == "change") {
+          model_data$analyte <- analyte_change
+        } else {
+          model_data$analyte <- fu_values
+        }
         model_data$analyte_baseline <- baseline_vals
         
          # Fit lmer model
@@ -334,7 +344,7 @@
 }
 
 
-.perform_analysis <- function(pheno_df, omics_df, omics_type, mixed_effects, additional_covariates = NULL) {
+.perform_analysis <- function(pheno_df, omics_df, omics_type, mixed_effects, additional_covariates = NULL, response_type = c("change", "level")) {
 
   pheno_baseline <- pheno_df[pheno_df$FU == 0, ]
   baseline_sample_ids <- pheno_baseline$SAMPLE_ID
@@ -345,9 +355,9 @@
 
   max_fu <- max(as.numeric(as.character(pheno_analysis$FU)), na.rm = TRUE)
   if (max_fu == 1) {
-    results <- .perform_lm_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates)
+    results <- .perform_lm_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates, response_type)
   } else {
-    results <- .perform_lme4_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates)
+    results <- .perform_lme4_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates, response_type)
   }
 
   if (!is.null(results)) {
@@ -414,11 +424,11 @@
 }
 
 
-# Helper function to run analysis across all strata (all, male, female)
 .run_stratified_analysis <- function(pheno_list, omics_list, omics_type,
-                                     additional_covariates) {
+                                     additional_covariates, response_type = c("change", "level")) {
 
-  # DNAm-specific: load probe lists, validate coverage, subset to full probes
+  response_type <- match.arg(response_type)
+
   filtered_probes <- NULL
   if (omics_type == "DNAm") {
     full_probes <- readRDS("Data/FAST_epicv1_epicv2_probe_list.rds")
@@ -438,7 +448,6 @@
       next
     }
 
-    # Generate data summary reports
     pheno_report <- .create_pheno_data_report(pheno_list[[dataset]])
     omics_report <- .create_omics_data_report(pheno_list[[dataset]], omics_list[[dataset]])
 
@@ -448,19 +457,17 @@
       covariates_report <- NULL
     }
 
-    # Run randomization analysis
     randomization_report <- .create_randomization_report(pheno_list[[dataset]], omics_list[[dataset]])
 
-    # Perform omics-wide association analysis
     analysis_results <- .perform_analysis(
       pheno_list[[dataset]],
       omics_list[[dataset]],
       omics_type,
       pheno_list$requires_mixed_effects,
-      additional_covariates
+      additional_covariates,
+      response_type
     )
 
-    # analysis_results is now a list with coefficients and treatment_effects
     outputs[[dataset]] <- list(
       coefficients = analysis_results$coefficients,
       treatment_effects = analysis_results$treatment_effects,
@@ -471,7 +478,6 @@
     )
   }
 
-  # DNAm-specific: add BH_P_VALUE_FILTERED column
   if (omics_type == "DNAm") {
     outputs <- .add_filtered_bh_correction(outputs, filtered_probes)
   }
