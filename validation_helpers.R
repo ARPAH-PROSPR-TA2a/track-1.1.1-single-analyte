@@ -21,7 +21,7 @@
   # the pipeline cannot tell whether values have been pre-processed
   # correctly -- they exist so the caller is reminded of the convention.
   if (omics_type == "DNAm") {
-    message("DNAm: input should be beta values.")
+    message("DNAm: input should be M-values.")
   } else if (omics_type == "Metabolomics") {
     message("Metabolomics: inputs should be log2-transformed prior to analysis.")
   } else if (omics_type == "Proteomics") {
