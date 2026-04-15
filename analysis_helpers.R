@@ -334,277 +334,43 @@
 }
 
 
-.perform_limma_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL, requires_mixed_effects) {
-
-   # Limma analysis for DNAm (DNA methylation) data
-   # Vectorized approach: fits all FU levels simultaneously for speed with high-dimensional data
-   # Uses empirical Bayes moderation for variance estimation (appropriate for 1M+ analytes)
-
-   require(limma)
-
-   # Prepare data using shared helper
-   prep <- .prepare_analysis_data(pheno_df, omics_df, pheno_baseline, omics_baseline)
-   pheno_merged <- prep$pheno_merged
-   shared_samples <- prep$shared_samples
-   baseline_col_idx <- prep$baseline_col_idx
-   omics_baseline_matrix <- prep$omics_baseline_matrix
-
-   # Convert full omics data to matrix (analytes × samples)
-   omics_values <- as.matrix(omics_df[, shared_samples])
-
-   # Get baseline values as matrix (analytes × samples)
-   omics_baseline_merged <- omics_baseline_matrix[, baseline_col_idx, drop = FALSE]
-
-   # Compute change scores vectorized: analyte_change is (n_analytes × n_samples) matrix
-   analyte_change <- omics_values - omics_baseline_merged
-
-   # Build design matrix based on FU structure
-     if (requires_mixed_effects) {
-       message("LIMMA: Multiple FU - using full model with FU effects")
-       pheno_merged$FU_factor <- factor(pheno_merged$FU)
-       design <- model.matrix(~ CONTROL_STATUS * FU_factor + FEMALE, data = pheno_merged)
-     } else {
-       message("LIMMA: Single FU - using simple model without FU effects")
-       design <- model.matrix(~ CONTROL_STATUS + FEMALE, data = pheno_merged)
-     }
-     
-     # Exclude FEMALE if it has only one level
-     if ("FEMALE" %in% colnames(design) && length(unique(design[, "FEMALE"])) == 1) {
-       design <- design[, colnames(design) != "FEMALE", drop = FALSE]
-     }
-     
-     # Add additional covariates if provided
-    if (!is.null(additional_covariates)) {
-      for (cov in additional_covariates) {
-        if (cov %in% colnames(pheno_merged)) {
-          cov_vals <- pheno_merged[[cov]]
-          if (!all(is.na(cov_vals))) {
-            design <- cbind(design, cov_vals)
-            colnames(design)[ncol(design)] <- cov
-          }
-        }
-      }
-    }
-    
-    # Fit model based on FU structure
-    if (requires_mixed_effects) {
-      # Multiple FU: estimate within-subject correlation
-      cor <- duplicateCorrelation(analyte_change, design, block = pheno_merged$SUBJECT_ID)
-      fit <- lmFit(analyte_change, design, 
-                   block = pheno_merged$SUBJECT_ID, 
-                   correlation = cor$consensus.correlation)
-    } else {
-      # Single FU: no repeated measures, no correlation estimation needed
-      fit <- lmFit(analyte_change, design)
-    }
-    fit <- eBayes(fit)
-    
-    # Initialize results data frame with pre-allocated capacity (avoid rbind in loop)
-    # Note: number of rows = n_analytes * number_of_coefficients
-    n_analytes <- nrow(analyte_change)
-    n_coefficients <- ncol(design)  # One column per coefficient (including intercept, which we'll skip)
-    max_rows <- n_analytes * n_coefficients
-    
-    results <- data.frame(
-      ANALYTE_NAME = character(max_rows),
-      COEFFICIENT = character(max_rows),
-      EFFECT_SIZE = numeric(max_rows),
-      SE = numeric(max_rows),
-      P_VALUE = numeric(max_rows),
-      stringsAsFactors = FALSE
-    )
-    
-    row_idx <- 0
-    
-    # Extract all fixed effect coefficients (including intercept)
-    coef_names <- colnames(design)
-    
-    for (coef_name in coef_names) {
-      # Find coefficient index in design matrix
-      coef_idx <- which(colnames(design) == coef_name)
-      
-      if (length(coef_idx) > 0) {
-        # Extract coefficients, SEs, and p-values (vectorized across analytes)
-        effect_sizes <- fit$coefficients[, coef_idx]
-        ses <- fit$stdev.unscaled[, coef_idx] * fit$sigma
-        p_values <- fit$p.value[, coef_idx]
-        
-        # Add to results (vectorized append)
-        for (j in seq_len(n_analytes)) {
-          row_idx <- row_idx + 1
-          results$ANALYTE_NAME[row_idx] <- omics_df$ANALYTE_NAME[j]
-          results$COEFFICIENT[row_idx] <- coef_name
-          results$EFFECT_SIZE[row_idx] <- effect_sizes[j]
-          results$SE[row_idx] <- ses[j]
-          results$P_VALUE[row_idx] <- p_values[j]
-        }
-      }
-    }
-    
-    # Trim results to actual rows used
-    coefficients <- results[1:row_idx, ]
-
-    # Return NULL if no results
-    if (nrow(coefficients) == 0) {
-      return(NULL)
-    }
-
-    # ===== Compute treatment effects using contrasts.fit() =====
-
-    # Get FU levels (excluding baseline which was filtered out earlier)
-    fu_levels_numeric <- sort(unique(as.numeric(as.character(pheno_merged$FU))))
-
-    # Build contrast matrix for treatment effects at each FU level
-    n_contrasts <- length(fu_levels_numeric)
-    contrast_matrix <- matrix(0, nrow = ncol(design), ncol = n_contrasts)
-    rownames(contrast_matrix) <- colnames(design)
-    colnames(contrast_matrix) <- paste0("FU", fu_levels_numeric)
-
-    # Find the CONTROL_STATUS coefficient name
-    ctrl_coef <- grep("^CONTROL_STATUS", colnames(design), value = TRUE)
-    ctrl_coef <- ctrl_coef[!grepl(":", ctrl_coef)]  # Main effect, not interaction
-
-    if (length(ctrl_coef) == 1) {
-      for (i in seq_along(fu_levels_numeric)) {
-        fu_val <- fu_levels_numeric[i]
-        contrast_col <- paste0("FU", fu_val)
-
-        # Main effect of CONTROL_STATUS
-        contrast_matrix[ctrl_coef, contrast_col] <- 1
-
-        # Add interaction term if it exists (for FU > reference level)
-        interaction_coef <- grep(paste0("CONTROL_STATUS.*:.*FU.*factor", fu_val), colnames(design), value = TRUE)
-        if (length(interaction_coef) == 0) {
-          # Try alternative naming pattern
-          interaction_coef <- grep(paste0("CONTROL_STATUS.*:.*FU.*", fu_val), colnames(design), value = TRUE)
-        }
-        if (length(interaction_coef) == 1) {
-          contrast_matrix[interaction_coef, contrast_col] <- 1
-        }
-      }
-
-      # Apply contrasts
-      fit_contrasts <- contrasts.fit(fit, contrast_matrix)
-      fit_contrasts <- eBayes(fit_contrasts)
-
-      # Extract treatment effects (vectorized across analytes)
-      treatment_effects <- data.frame(
-        ANALYTE_NAME = character(n_analytes * n_contrasts),
-        FU = integer(n_analytes * n_contrasts),
-        EFFECT_SIZE = numeric(n_analytes * n_contrasts),
-        SE = numeric(n_analytes * n_contrasts),
-        P_VALUE = numeric(n_analytes * n_contrasts),
-        stringsAsFactors = FALSE
-      )
-
-      te_row_idx <- 0
-      for (i in seq_along(fu_levels_numeric)) {
-        fu_val <- fu_levels_numeric[i]
-        contrast_col <- paste0("FU", fu_val)
-
-        effect_sizes <- fit_contrasts$coefficients[, contrast_col]
-        ses <- fit_contrasts$stdev.unscaled[, contrast_col] * fit_contrasts$sigma
-        p_values <- fit_contrasts$p.value[, contrast_col]
-
-        for (j in seq_len(n_analytes)) {
-          te_row_idx <- te_row_idx + 1
-          treatment_effects$ANALYTE_NAME[te_row_idx] <- omics_df$ANALYTE_NAME[j]
-          treatment_effects$FU[te_row_idx] <- fu_val
-          treatment_effects$EFFECT_SIZE[te_row_idx] <- effect_sizes[j]
-          treatment_effects$SE[te_row_idx] <- ses[j]
-          treatment_effects$P_VALUE[te_row_idx] <- p_values[j]
-        }
-      }
-
-      treatment_effects <- treatment_effects[1:te_row_idx, ]
-    } else {
-      # No CONTROL_STATUS coefficient found (shouldn't happen)
-      warning("Could not find CONTROL_STATUS coefficient for treatment effects")
-      treatment_effects <- NULL
-    }
-
-    return(list(
-      coefficients = coefficients,
-      treatment_effects = treatment_effects
-    ))
-}
-
-
 .perform_analysis <- function(pheno_df, omics_df, omics_type, mixed_effects, additional_covariates = NULL) {
 
-  # STEP 1: Extract baseline data for all analysis functions
   pheno_baseline <- pheno_df[pheno_df$FU == 0, ]
   baseline_sample_ids <- pheno_baseline$SAMPLE_ID
   omics_baseline <- omics_df[, colnames(omics_df) %in% baseline_sample_ids, drop = FALSE]
 
-  # Filter to post-baseline analysis data (FU > 0)
   pheno_analysis <- pheno_df[pheno_df$FU != 0, ]
   omics_analysis <- omics_df
 
-  # STEP 2: Dispatch to appropriate analysis function
-  if (omics_type == "DNAm") {
-    # Limma handles both single and multiple FU cases
-    results <- .perform_limma_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates, mixed_effects)
-
-    # Apply BH correction to both tables
-    if (!is.null(results)) {
-      if (!is.null(results$coefficients) && nrow(results$coefficients) > 0) {
-        results$coefficients <- .apply_multiple_testing_correction(
-          results$coefficients, group_col = "COEFFICIENT"
-        )
-        results$coefficients <- results$coefficients[
-          order(results$coefficients$ANALYTE_NAME, results$coefficients$COEFFICIENT),
-        ]
-      }
-
-      if (!is.null(results$treatment_effects) && nrow(results$treatment_effects) > 0) {
-        results$treatment_effects <- .apply_multiple_testing_correction(
-          results$treatment_effects, group_col = "FU"
-        )
-        results$treatment_effects <- results$treatment_effects[
-          order(results$treatment_effects$ANALYTE_NAME, results$treatment_effects$FU),
-        ]
-      }
-    }
-
-    return(results)
-
+  max_fu <- max(as.numeric(as.character(pheno_analysis$FU)), na.rm = TRUE)
+  if (max_fu == 1) {
+    results <- .perform_lm_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates)
   } else {
-    # Proteomics/Metabolomics - check if LM or LME4
-    max_fu <- max(as.numeric(as.character(pheno_analysis$FU)), na.rm = TRUE)
-    if (max_fu == 1) {
-      # Single follow-up: use linear regression
-      results <- .perform_lm_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates)
-    } else {
-      # Multiple follow-ups: use mixed effects
-      results <- .perform_lme4_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates)
-    }
-
-    # STEP 3: Apply multiple testing correction to both tables
-    if (!is.null(results)) {
-      # Correct coefficients (grouped by COEFFICIENT)
-      if (!is.null(results$coefficients) && nrow(results$coefficients) > 0) {
-        results$coefficients <- .apply_multiple_testing_correction(
-          results$coefficients, group_col = "COEFFICIENT"
-        )
-        results$coefficients <- results$coefficients[
-          order(results$coefficients$ANALYTE_NAME, results$coefficients$COEFFICIENT),
-        ]
-      }
-
-      # Correct treatment effects (grouped by FU)
-      if (!is.null(results$treatment_effects) && nrow(results$treatment_effects) > 0) {
-        results$treatment_effects <- .apply_multiple_testing_correction(
-          results$treatment_effects, group_col = "FU"
-        )
-        results$treatment_effects <- results$treatment_effects[
-          order(results$treatment_effects$ANALYTE_NAME, results$treatment_effects$FU),
-        ]
-      }
-    }
-
-    return(results)
+    results <- .perform_lme4_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates)
   }
+
+  if (!is.null(results)) {
+    if (!is.null(results$coefficients) && nrow(results$coefficients) > 0) {
+      results$coefficients <- .apply_multiple_testing_correction(
+        results$coefficients, group_col = "COEFFICIENT"
+      )
+      results$coefficients <- results$coefficients[
+        order(results$coefficients$ANALYTE_NAME, results$coefficients$COEFFICIENT),
+      ]
+    }
+
+    if (!is.null(results$treatment_effects) && nrow(results$treatment_effects) > 0) {
+      results$treatment_effects <- .apply_multiple_testing_correction(
+        results$treatment_effects, group_col = "FU"
+      )
+      results$treatment_effects <- results$treatment_effects[
+        order(results$treatment_effects$ANALYTE_NAME, results$treatment_effects$FU),
+      ]
+    }
+  }
+
+  return(results)
 }
 
 
