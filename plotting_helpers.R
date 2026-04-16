@@ -5,11 +5,29 @@
 #
 # Usage:
 #   source("plotting_helpers.R")
-#   results <- readRDS("my_results.rds")
-#   generate_all_plots(results)
+#   results <- FAST_omics_WAS(pheno, omics)
+#   generate_all_plots(results, analysis = "change")
+#   generate_all_plots(results$change)  # equivalent
 
 library(qqman)
 library(ggplot2)
+
+# Accept either:
+# - a stratum-level results object (list(all/male/female)), OR
+# - the full FAST_omics_WAS return value (list(change=<...>, level=<...>)).
+.coerce_to_strata_results <- function(results, analysis = c("change", "level")) {
+  analysis <- match.arg(analysis)
+
+  if (is.list(results) && all(c("all", "male", "female") %in% names(results))) {
+    return(results)
+  }
+
+  if (is.list(results) && analysis %in% names(results)) {
+    return(results[[analysis]])
+  }
+
+  stop("Invalid results object. Pass FAST_omics_WAS output (with $change/$level) or a stratum-level results list.")
+}
 
 # ===== INDIVIDUAL PLOT FUNCTIONS =====
 
@@ -19,9 +37,12 @@ library(ggplot2)
 #' @param stratum "all", "male", or "female"
 #' @param fu Which FU level to plot
 #' @param probe_set "full" (all probes) or "filtered" (filtered probes only, DNAm)
+#' @param analysis If passing the full FAST_omics_WAS output, which analysis to plot ("change" or "level")
 #' @param title Optional custom title (auto-generated if NULL)
 plot_qq <- function(results, stratum = "all", fu = 1, probe_set = "full",
-                    title = NULL) {
+                    analysis = c("change", "level"), title = NULL) {
+
+  results <- .coerce_to_strata_results(results, analysis = match.arg(analysis))
 
   te <- results[[stratum]]$treatment_effects
   if (is.null(te)) stop(paste0("No results for stratum '", stratum, "'"))
@@ -53,9 +74,12 @@ plot_qq <- function(results, stratum = "all", fu = 1, probe_set = "full",
 #' @param fu Which FU level to plot
 #' @param probe_set "full" (all probes) or "filtered" (filtered probes only, DNAm)
 #' @param p_threshold Significance threshold for coloring (default 0.05, applied to BH)
+#' @param analysis If passing the full FAST_omics_WAS output, which analysis to plot ("change" or "level")
 #' @param title Optional custom title (auto-generated if NULL)
 plot_volcano <- function(results, stratum = "all", fu = 1, probe_set = "full",
-                         p_threshold = 0.05, title = NULL) {
+                         p_threshold = 0.05, analysis = c("change", "level"), title = NULL) {
+  results <- .coerce_to_strata_results(results, analysis = match.arg(analysis))
+
   te <- results[[stratum]]$treatment_effects
   if (is.null(te)) stop(paste0("No results for stratum '", stratum, "'"))
   te <- te[te$FU == fu, ]
@@ -114,7 +138,9 @@ plot_volcano <- function(results, stratum = "all", fu = 1, probe_set = "full",
 #'
 #' @param results Results object from FAST_omics_WAS
 #' @param figures_dir Directory to save PDFs (default "Figures", created if needed)
-generate_all_plots <- function(results, figures_dir = NULL) {
+generate_all_plots <- function(results, figures_dir = NULL, analysis = c("change", "level")) {
+
+  results <- .coerce_to_strata_results(results, analysis = match.arg(analysis))
 
   # Default directory with user prompt
   if (is.null(figures_dir)) {
