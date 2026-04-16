@@ -52,18 +52,37 @@
   
   # Step 3: Validate required columns (values, then types)
   # FU validation
-  if (!all(pheno$FU %in% 0:3)) {
-    stop("FU must contain only values 0, 1, 2, or 3")
+  fu_num <- suppressWarnings(as.integer(as.character(pheno$FU)))
+  if (any(is.na(fu_num))) {
+    stop("FU must be integer-valued (e.g., 0, 1, 2, ...).")
   }
-  if (!any(pheno$FU == 0)) {
+  if (any(fu_num < 0)) {
+    stop("FU must be non-negative (baseline is FU == 0).")
+  }
+  if (!any(fu_num == 0)) {
     stop("pheno must contain at least one baseline sample (FU == 0)")
   }
-  if (!any(pheno$FU == 1)) {
+  if (!any(fu_num == 1)) {
     stop("pheno must contain at least one follow-up sample (FU >= 1)")
+  }
+  # Enforce FU encoding as consecutive integers: 0, 1, 2, 3, ...
+  # This prevents common trial encodings like months (0, 3, 6, 12).
+  unique_fu <- sort(unique(fu_num))
+  expected_fu <- seq.int(0, max(unique_fu))
+  if (!identical(unique_fu, expected_fu)) {
+    stop(
+      "FU must be encoded as consecutive integers starting at 0: ",
+      paste(expected_fu, collapse = ", "),
+      ". Found: ", paste(unique_fu, collapse = ", "),
+      ". If your raw follow-up is in months (e.g., 0,3,6,12), recode to 0,1,2,3 before running."
+    )
   }
   if (!is.factor(pheno$FU)) {
     warning("FU column is not a factor. Converting to factor.")
-    pheno$FU <- factor(pheno$FU)
+    pheno$FU <- factor(fu_num)
+  } else {
+    # Normalize factor representation (ensures levels are "0","1",... in order).
+    pheno$FU <- factor(fu_num)
   }
   
   # FEMALE validation

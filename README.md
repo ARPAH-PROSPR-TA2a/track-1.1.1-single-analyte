@@ -2,10 +2,14 @@
 
 This repository, written in R, provides a reliable implementation of
 omics-wide association studies for Proteomics, Metabolomics, and DNA
-Methylation. It supports multiple analysis methods (linear models,
-linear mixed-effects models, and limma) and automatically stratifies
-results by gender when data permits. It also provides detailed data
-documentation.
+Methylation. It standardizes inference on `lm()` (single follow-up) and
+`lmerTest::lmer()` (multiple follow-ups) and automatically stratifies
+results by gender when data permits.
+
+The pipeline runs two parallel analyses:
+
+- `change`: models post-baseline change scores
+- `level`: models absolute post-baseline levels
 
 ## Installation
 
@@ -46,12 +50,15 @@ results <- FAST_omics_WAS(
 )
 
 # View results
-head(results$all$coefficients)
-head(results$all$treatment_effects)
+head(results$change$all$coefficients)
+head(results$change$all$treatment_effects)
+
+head(results$level$all$coefficients)
+head(results$level$all$treatment_effects)
 
 # Access data quality summaries
-results$all$pheno_summary
-results$all$omics_summary
+results$change$all$pheno_summary
+results$change$all$omics_summary
 ```
 
 ### Parameters
@@ -70,12 +77,16 @@ results$all$omics_summary
 
 ### Return Value
 
-A list containing results stratified by gender:
+A list with two top-level elements:
+
+-   **`$change`**: Change-score analysis (follow-up minus baseline, baseline-adjusted)
+-   **`$level`**: Level analysis (absolute follow-up, baseline-adjusted)
+
+Each of `$change` and `$level` contains results stratified by gender. Male and female specific results are only generated if both are present in the data:
 
 -   **`$all`**: Results from the full dataset
--   **`$male`**: Results from male subset (NULL if no males in data)
--   **`$female`**: Results from female subset (NULL if no females in
-    data)
+-   **`$male`**: Results from male subset
+-   **`$female`**: Results from female subset
 
 Each stratum contains:
 
@@ -93,6 +104,10 @@ Each stratum contains:
 -   **`$randomization_summary`**: Baseline balance check per analyte
     (Welch's t-test comparing treatment groups)
 
+**DNAm only**: `BH_P_VALUE_FILTERED` is added to `coefficients` and
+`treatment_effects` for a pre-specified filtered probe set (useful for
+assessing significance under different multiple-testing burdens).
+
 ## Data Format Requirements
 
 ### Phenotype Data
@@ -104,7 +119,7 @@ columns**:
 |----------------|----------------|------------------------|------------------|
 | `SAMPLE_ID`             | Character                | Unique identifier for each sample                    | Unique, no duplicates                   |
 | `SUBJECT_ID`            | Character                | Subject identifier for tracking across follow-ups    | All SUBJECT_ID\*FU pairs must be unique |
-| `FU`                    | Factor                   | Follow-up timepoint                                  | Levels: 0 (baseline), 1-3 (follow-ups)  |
+| `FU`                    | Factor                   | Follow-up timepoint                                  | Levels: 0 (baseline), 1..max (follow-ups), consecutive integers |
 | `FEMALE`                | Factor                   | Sex indicator                                        | Levels: 0 (male), 1 (female)            |
 | `CONTROL_STATUS`        | Factor                   | Treatment assignment                                 | Levels: 0 (control), 1 (treatment)      |
 | *Additional Covariates* | *Factor/Numeric/Logical* | *Optional columns for additional analysis variables* | *Any valid values*                      |
@@ -175,26 +190,25 @@ cg00000109      0.721        0.735        0.691        0.702
 
 ## Analysis Methods
 
-The pipeline automatically selects the appropriate analysis method based
-on omics type and follow-up structure:
+Within each of the two analysis types (`change` and `level`), the
+pipeline selects the appropriate model based on follow-up structure:
 
 ```         
-Is omics_type == "DNAm"?
-├─ YES → Use LIMMA (vectorized analysis with empirical Bayes)
-└─ NO → Check maximum follow-up level
-       ├─ max FU == 1 → Use LM (linear regression)
-       └─ max FU > 1 → Use LME4 (linear mixed effects)
+Check maximum follow-up level
+├─ max FU == 1 → Use LM (linear regression via lm)
+└─ max FU > 1 → Use LME4 (linear mixed effects via lmerTest::lmer)
 ```
 
 ## More Information
 
 For comprehensive examples and detailed documentation of the analysis
-pipeline, see [CODE_WALKTHROUGH_v2.md](CODE_WALKTHROUGH_v2.md).
+pipeline, see [CODE_WALKTHROUGH_v3.html](CODE_WALKTHROUGH_v3.html).
 
 ## Plotting Results
 
 The pipeline includes plotting functions for visualizing treatment effects.
-Source `plotting_helpers.R` and call `generate_all_plots()` on your results:
+Source `plotting_helpers.R` and call `generate_all_plots()` on either the
+`change` or `level` result:
 
 ``` r
 source("plotting_helpers.R")
@@ -202,8 +216,10 @@ source("plotting_helpers.R")
 results <- FAST_omics_WAS(pheno, omics, omics_type = "DNAm",
                           additional_covariates = c("age", "bmi"))
 
-generate_all_plots(results)                        # saves to Figures/
-generate_all_plots(results, figures_dir = "my_dir") # saves to my_dir/
+generate_all_plots(results$change)                          # saves to Figures/
+generate_all_plots(results$change, figures_dir = "my_dir")  # saves to my_dir/
+
+generate_all_plots(results$level)                           # optional
 ```
 
 This auto-detects all dimensions of your results (strata, FU levels,
