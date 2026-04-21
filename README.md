@@ -6,10 +6,7 @@ Methylation. It standardizes inference on `lm()` (single follow-up) and
 `lmerTest::lmer()` (multiple follow-ups) and automatically stratifies
 results by gender when data permits.
 
-The pipeline runs two parallel analyses:
-
-- `change`: models post-baseline change scores
-- `level`: models absolute post-baseline levels
+The pipeline runs two parallel analyses and returns them alongside shared QC reports:
 
 ## Installation
 
@@ -49,16 +46,16 @@ results <- FAST_omics_WAS(
   additional_covariates = c("age", "bmi")
 )
 
-# View results
-head(results$change$all$coefficients)
-head(results$change$all$treatment_effects)
+# View analysis results
+head(results$analysis_change$all$coefficients)
+head(results$analysis_change$all$treatment_effects)
 
-head(results$level$all$coefficients)
-head(results$level$all$treatment_effects)
+head(results$analysis_level$all$coefficients)
+head(results$analysis_level$all$treatment_effects)
 
-# Access data quality summaries
-results$change$all$pheno_summary
-results$change$all$omics_summary
+# Access data quality reports (shared across change and level)
+results$reports$all$pheno_summary
+results$reports$all$omics_summary
 ```
 
 ### Parameters
@@ -77,23 +74,27 @@ results$change$all$omics_summary
 
 ### Return Value
 
-A list with two top-level elements:
+A list with three top-level elements:
 
--   **`$change`**: Change-score analysis (follow-up minus baseline, baseline-adjusted)
--   **`$level`**: Level analysis (absolute follow-up, baseline-adjusted)
+-   **`$analysis_change`**: Change-score analysis (follow-up minus baseline, baseline-adjusted)
+-   **`$analysis_level`**: Level analysis (absolute follow-up, baseline-adjusted)
+-   **`$reports`**: QC and data summary reports (generated once, shared across both analyses)
 
-Each of `$change` and `$level` contains results stratified by gender. Male and female specific results are only generated if both are present in the data:
+Each of `$analysis_change` and `$analysis_level` contains results stratified by gender. Male and female specific results are only generated if both sexes are present in the data:
 
 -   **`$all`**: Results from the full dataset
 -   **`$male`**: Results from male subset
 -   **`$female`**: Results from female subset
 
-Each stratum contains:
+Each stratum of `$analysis_change` and `$analysis_level` contains:
 
 -   **`$coefficients`**: Data frame of all model coefficients for each
     analyte (ANALYTE_NAME, COEFFICIENT, EFFECT_SIZE, SE, P_VALUE, BH_P_VALUE)
 -   **`$treatment_effects`**: Data frame of treatment effects at each
     follow-up level (ANALYTE_NAME, FU, EFFECT_SIZE, SE, P_VALUE, BH_P_VALUE)
+
+`$reports` is stratified the same way (`$all`, `$male`, `$female`). Each stratum contains:
+
 -   **`$pheno_summary`**: Data frame with one row per (FU, FEMALE) cell
     giving N_SUBJECTS, N_CONTROL, N_TREATMENT (subject-level) and
     N_SAMPLES (row-level)
@@ -190,7 +191,7 @@ cg00000109      0.721        0.735        0.691        0.702
 
 ## Analysis Methods
 
-Within each of the two analysis types (`change` and `level`), the
+Within each of the two analysis types (`analysis_change` and `analysis_level`), the
 pipeline selects the appropriate model based on follow-up structure:
 
 ```         
@@ -216,10 +217,10 @@ source("plotting_helpers.R")
 results <- FAST_omics_WAS(pheno, omics, omics_type = "DNAm",
                           additional_covariates = c("age", "bmi"))
 
-generate_all_plots(results$change)                          # saves to Figures/
-generate_all_plots(results$change, figures_dir = "my_dir")  # saves to my_dir/
+generate_all_plots(results$analysis_change)                          # saves to Figures/
+generate_all_plots(results$analysis_change, figures_dir = "my_dir")  # saves to my_dir/
 
-generate_all_plots(results$level)                           # optional
+generate_all_plots(results$analysis_level)                           # optional
 ```
 
 This auto-detects all dimensions of your results (strata, FU levels,

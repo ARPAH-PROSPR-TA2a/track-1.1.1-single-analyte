@@ -12,7 +12,9 @@
 #
 # Each test runs both change and level models (change = analyte change from baseline,
 # level = absolute analyte level at follow-up). Results are nested as:
-#   list(change = list(all, male, female), level = list(all, male, female))
+#   list(analysis_change = list(all, male, female),
+#        analysis_level  = list(all, male, female),
+#        reports         = list(all, male, female))
 #
 # DNAm results have the same structure as non-DNAm, with an additional
 # BH_P_VALUE_FILTERED column that contains BH-corrected p-values for
@@ -120,39 +122,39 @@ validate_treatment_effects_multi_fu <- function(results, method = "LME4") {
   )
 }
 
-#' Standard structural checks for non-DNAm results
-#' @param results Results object with all/male/female strata
+#' Standard structural checks for non-DNAm analysis results (one response type)
+#' @param analysis Analysis sub-object (e.g. results$analysis_change) with all/male/female strata
 #' @param expected_fu_levels Expected FU levels in treatment effects
 #' @return Named list of check results
-check_non_dnam_structure <- function(results, expected_fu_levels) {
+check_non_dnam_structure <- function(analysis, expected_fu_levels) {
   list(
-    "Coefficients exist" = !is.null(results$all$coefficients),
-    "Coefficients have rows" = nrow(results$all$coefficients) > 0,
-    "Coefficients have BH correction" = "BH_P_VALUE" %in% colnames(results$all$coefficients),
-    "Treatment effects exist" = !is.null(results$all$treatment_effects),
-    "Treatment effects have rows" = nrow(results$all$treatment_effects) > 0,
-    "Treatment effects FU levels correct" = all(sort(unique(results$all$treatment_effects$FU)) %in% expected_fu_levels),
-    "Treatment effects have BH correction" = "BH_P_VALUE" %in% colnames(results$all$treatment_effects),
-    "Sex stratification works" = !is.null(results$male$coefficients) && !is.null(results$female$coefficients),
-    "Output structure correct" = all(c("all", "male", "female") %in% names(results))
+    "Coefficients exist" = !is.null(analysis$all$coefficients),
+    "Coefficients have rows" = nrow(analysis$all$coefficients) > 0,
+    "Coefficients have BH correction" = "BH_P_VALUE" %in% colnames(analysis$all$coefficients),
+    "Treatment effects exist" = !is.null(analysis$all$treatment_effects),
+    "Treatment effects have rows" = nrow(analysis$all$treatment_effects) > 0,
+    "Treatment effects FU levels correct" = all(sort(unique(analysis$all$treatment_effects$FU)) %in% expected_fu_levels),
+    "Treatment effects have BH correction" = "BH_P_VALUE" %in% colnames(analysis$all$treatment_effects),
+    "Sex stratification works" = !is.null(analysis$male$coefficients) && !is.null(analysis$female$coefficients),
+    "Output structure correct" = all(c("all", "male", "female") %in% names(analysis))
   )
 }
 
-#' Standard structural checks for DNAm results (flat structure with BH_P_VALUE_FILTERED column)
-#' @param results Results object with all/male/female strata
+#' Standard structural checks for DNAm analysis results (flat structure with BH_P_VALUE_FILTERED column)
+#' @param analysis Analysis sub-object (e.g. results$analysis_change) with all/male/female strata
 #' @param expected_fu_levels Expected FU levels in treatment effects
 #' @param filtered_probes Vector of filtered probe names for validation
 #' @return Named list of check results
-check_dnam_structure <- function(results, expected_fu_levels, filtered_probes) {
-  coefs <- results$all$coefficients
-  te <- results$all$treatment_effects
+check_dnam_structure <- function(analysis, expected_fu_levels, filtered_probes) {
+  coefs <- analysis$all$coefficients
+  te <- analysis$all$treatment_effects
 
   filtered_in_results <- coefs$ANALYTE_NAME %in% filtered_probes
   filtered_have_bh <- all(!is.na(coefs$BH_P_VALUE_FILTERED[filtered_in_results]))
   non_filtered_have_na <- all(is.na(coefs$BH_P_VALUE_FILTERED[!filtered_in_results]))
 
   list(
-    "Has all/male/female strata" = all(c("all", "male", "female") %in% names(results)),
+    "Has all/male/female strata" = all(c("all", "male", "female") %in% names(analysis)),
     "Coefficients exist" = !is.null(coefs),
     "Coefficients have rows" = nrow(coefs) > 0,
     "Has effect sizes" = all(!is.na(coefs$EFFECT_SIZE)),
@@ -165,18 +167,36 @@ check_dnam_structure <- function(results, expected_fu_levels, filtered_probes) {
     "TE has BH_P_VALUE" = "BH_P_VALUE" %in% colnames(te),
     "TE has BH_P_VALUE_FILTERED" = "BH_P_VALUE_FILTERED" %in% colnames(te),
     "TE FU levels correct" = all(sort(unique(te$FU)) %in% expected_fu_levels),
-    "Sex stratification works" = !is.null(results$male$coefficients) && !is.null(results$female$coefficients)
+    "Sex stratification works" = !is.null(analysis$male$coefficients) && !is.null(analysis$female$coefficients)
   )
 }
 
-#' Check top-level structure: has change and level
+#' Check top-level structure: has analysis_change, analysis_level, and reports
 #' @param results Full results object
 #' @return Named list of check results
 check_top_level_structure <- function(results) {
   list(
-    "Has change and level" = all(c("change", "level") %in% names(results)),
-    "Change has all/male/female" = all(c("all", "male", "female") %in% names(results$change)),
-    "Level has all/male/female" = all(c("all", "male", "female") %in% names(results$level))
+    "Has analysis_change, analysis_level, and reports" = all(c("analysis_change", "analysis_level", "reports") %in% names(results)),
+    "analysis_change has all/male/female" = all(c("all", "male", "female") %in% names(results$analysis_change)),
+    "analysis_level has all/male/female" = all(c("all", "male", "female") %in% names(results$analysis_level)),
+    "reports has all/male/female" = all(c("all", "male", "female") %in% names(results$reports))
+  )
+}
+
+#' Check reports structure: pheno, omics, covariates, randomization summaries
+#' @param results Full results object
+#' @return Named list of check results
+check_reports_structure <- function(results) {
+  report <- results$reports$all
+  list(
+    "Reports all stratum exists" = !is.null(report),
+    "Has pheno_summary" = !is.null(report$pheno_summary),
+    "Has omics_summary" = !is.null(report$omics_summary),
+    "Has randomization_summary" = !is.null(report$randomization_summary),
+    "Pheno summary has rows" = nrow(report$pheno_summary) > 0,
+    "Omics summary has rows" = nrow(report$omics_summary) > 0,
+    "Randomization summary has rows" = nrow(report$randomization_summary) > 0,
+    "Reports sex stratification works" = !is.null(results$reports$male) && !is.null(results$reports$female)
   )
 }
 
@@ -267,39 +287,42 @@ cat("Method: Linear regression (LM)\n\n")
 
 cat("Running analysis...\n")
 results_test1 <- FAST_omics_WAS(
-
   pheno = pheno_single_fu,
   omics = omics,
   omics_type = "Proteomics",
   additional_covariates = additional_covariates
 )
 
-cat("Top-Level Structure Checks (both change and level)\n")
+cat("Top-Level Structure Checks\n")
 test1_top_pass <- run_checks(check_top_level_structure(results_test1))
 cat("\n")
 
-print_results_summary(results_test1$change$all, "Change Results")
-print_results_summary(results_test1$level$all, "Level Results")
+print_results_summary(results_test1$analysis_change$all, "Change Results")
+print_results_summary(results_test1$analysis_level$all, "Level Results")
 cat("\n")
 
 cat("Change Structural Checks\n")
-test1_change_struct_pass <- run_checks(check_non_dnam_structure(results_test1$change, expected_fu_levels = 1))
+test1_change_struct_pass <- run_checks(check_non_dnam_structure(results_test1$analysis_change, expected_fu_levels = 1))
 cat("\n")
 
 cat("Level Structural Checks\n")
-test1_level_struct_pass <- run_checks(check_non_dnam_structure(results_test1$level, expected_fu_levels = 1))
+test1_level_struct_pass <- run_checks(check_non_dnam_structure(results_test1$analysis_level, expected_fu_levels = 1))
+cat("\n")
+
+cat("Reports Structural Checks\n")
+test1_reports_pass <- run_checks(check_reports_structure(results_test1))
 cat("\n")
 
 cat("Change Treatment Effect Validation\n")
-test1_change_te_pass <- run_checks(validate_treatment_effects_single_fu(results_test1$change$all))
+test1_change_te_pass <- run_checks(validate_treatment_effects_single_fu(results_test1$analysis_change$all))
 cat("\n")
 
 cat("Level Treatment Effect Validation\n")
-test1_level_te_pass <- run_checks(validate_treatment_effects_single_fu(results_test1$level$all))
+test1_level_te_pass <- run_checks(validate_treatment_effects_single_fu(results_test1$analysis_level$all))
 cat("\n")
 
 test1_pass <- test1_top_pass && test1_change_struct_pass && test1_level_struct_pass &&
-              test1_change_te_pass && test1_level_te_pass
+              test1_reports_pass && test1_change_te_pass && test1_level_te_pass
 
 # =============================================================================
 # TEST 2: Non-DNAm + Multiple FU (uses LME4)
@@ -317,32 +340,36 @@ results_test2 <- FAST_omics_WAS(
   additional_covariates = additional_covariates
 )
 
-cat("Top-Level Structure Checks (both change and level)\n")
+cat("Top-Level Structure Checks\n")
 test2_top_pass <- run_checks(check_top_level_structure(results_test2))
 cat("\n")
 
-print_results_summary(results_test2$change$all, "Change Results")
-print_results_summary(results_test2$level$all, "Level Results")
+print_results_summary(results_test2$analysis_change$all, "Change Results")
+print_results_summary(results_test2$analysis_level$all, "Level Results")
 cat("\n")
 
 cat("Change Structural Checks\n")
-test2_change_struct_pass <- run_checks(check_non_dnam_structure(results_test2$change, expected_fu_levels = c(1, 2)))
+test2_change_struct_pass <- run_checks(check_non_dnam_structure(results_test2$analysis_change, expected_fu_levels = c(1, 2)))
 cat("\n")
 
 cat("Level Structural Checks\n")
-test2_level_struct_pass <- run_checks(check_non_dnam_structure(results_test2$level, expected_fu_levels = c(1, 2)))
+test2_level_struct_pass <- run_checks(check_non_dnam_structure(results_test2$analysis_level, expected_fu_levels = c(1, 2)))
+cat("\n")
+
+cat("Reports Structural Checks\n")
+test2_reports_pass <- run_checks(check_reports_structure(results_test2))
 cat("\n")
 
 cat("Change Treatment Effect Validation\n")
-test2_change_te_pass <- run_checks(validate_treatment_effects_multi_fu(results_test2$change$all, method = "emmeans"))
+test2_change_te_pass <- run_checks(validate_treatment_effects_multi_fu(results_test2$analysis_change$all, method = "emmeans"))
 cat("\n")
 
 cat("Level Treatment Effect Validation\n")
-test2_level_te_pass <- run_checks(validate_treatment_effects_multi_fu(results_test2$level$all, method = "emmeans"))
+test2_level_te_pass <- run_checks(validate_treatment_effects_multi_fu(results_test2$analysis_level$all, method = "emmeans"))
 cat("\n")
 
 test2_pass <- test2_top_pass && test2_change_struct_pass && test2_level_struct_pass &&
-              test2_change_te_pass && test2_level_te_pass
+              test2_reports_pass && test2_change_te_pass && test2_level_te_pass
 
 # =============================================================================
 # TEST 3: DNAm + Single FU (uses LM, with BH_P_VALUE_FILTERED column)
@@ -364,40 +391,44 @@ cat("\nResults Structure\n")
 cat("  Top-level keys: ", paste(names(results_test3), collapse = ", "), "\n")
 
 cat("\nChange Results\n")
-print_results_summary(results_test3$change$all, "Change: All probes (with BH_P_VALUE_FILTERED column)")
-n_filtered_bh <- sum(!is.na(results_test3$change$all$coefficients$BH_P_VALUE_FILTERED))
-n_total <- length(unique(results_test3$change$all$coefficients$ANALYTE_NAME))
+print_results_summary(results_test3$analysis_change$all, "Change: All probes (with BH_P_VALUE_FILTERED column)")
+n_filtered_bh <- sum(!is.na(results_test3$analysis_change$all$coefficients$BH_P_VALUE_FILTERED))
+n_total <- length(unique(results_test3$analysis_change$all$coefficients$ANALYTE_NAME))
 cat("  Probes with BH_P_VALUE_FILTERED: ", n_filtered_bh, " / ", n_total, "\n")
 
 cat("\nLevel Results\n")
-print_results_summary(results_test3$level$all, "Level: All probes (with BH_P_VALUE_FILTERED column)")
-n_filtered_bh <- sum(!is.na(results_test3$level$all$coefficients$BH_P_VALUE_FILTERED))
-n_total <- length(unique(results_test3$level$all$coefficients$ANALYTE_NAME))
+print_results_summary(results_test3$analysis_level$all, "Level: All probes (with BH_P_VALUE_FILTERED column)")
+n_filtered_bh <- sum(!is.na(results_test3$analysis_level$all$coefficients$BH_P_VALUE_FILTERED))
+n_total <- length(unique(results_test3$analysis_level$all$coefficients$ANALYTE_NAME))
 cat("  Probes with BH_P_VALUE_FILTERED: ", n_filtered_bh, " / ", n_total, "\n")
 cat("\n")
 
-cat("Top-Level Structure Checks (both change and level)\n")
+cat("Top-Level Structure Checks\n")
 test3_top_pass <- run_checks(check_top_level_structure(results_test3))
 cat("\n")
 
 cat("Change Structural Checks\n")
-test3_change_struct_pass <- run_checks(check_dnam_structure(results_test3$change, expected_fu_levels = 1, filtered_probes))
+test3_change_struct_pass <- run_checks(check_dnam_structure(results_test3$analysis_change, expected_fu_levels = 1, filtered_probes))
 cat("\n")
 
 cat("Level Structural Checks\n")
-test3_level_struct_pass <- run_checks(check_dnam_structure(results_test3$level, expected_fu_levels = 1, filtered_probes))
+test3_level_struct_pass <- run_checks(check_dnam_structure(results_test3$analysis_level, expected_fu_levels = 1, filtered_probes))
+cat("\n")
+
+cat("Reports Structural Checks\n")
+test3_reports_pass <- run_checks(check_reports_structure(results_test3))
 cat("\n")
 
 cat("Change Treatment Effect Validation\n")
-test3_change_te_pass <- run_checks(validate_treatment_effects_single_fu(results_test3$change$all))
+test3_change_te_pass <- run_checks(validate_treatment_effects_single_fu(results_test3$analysis_change$all))
 cat("\n")
 
 cat("Level Treatment Effect Validation\n")
-test3_level_te_pass <- run_checks(validate_treatment_effects_single_fu(results_test3$level$all))
+test3_level_te_pass <- run_checks(validate_treatment_effects_single_fu(results_test3$analysis_level$all))
 cat("\n")
 
 test3_pass <- test3_top_pass && test3_change_struct_pass && test3_level_struct_pass &&
-              test3_change_te_pass && test3_level_te_pass
+              test3_reports_pass && test3_change_te_pass && test3_level_te_pass
 
 # =============================================================================
 # TEST 4: DNAm + Multiple FU (uses LME4, with BH_P_VALUE_FILTERED column)
@@ -419,40 +450,44 @@ cat("\nResults Structure\n")
 cat("  Top-level keys: ", paste(names(results_test4), collapse = ", "), "\n")
 
 cat("\nChange Results\n")
-print_results_summary(results_test4$change$all, "Change: All probes (with BH_P_VALUE_FILTERED column)")
-n_filtered_bh <- sum(!is.na(results_test4$change$all$coefficients$BH_P_VALUE_FILTERED))
-n_total <- length(unique(results_test4$change$all$coefficients$ANALYTE_NAME))
+print_results_summary(results_test4$analysis_change$all, "Change: All probes (with BH_P_VALUE_FILTERED column)")
+n_filtered_bh <- sum(!is.na(results_test4$analysis_change$all$coefficients$BH_P_VALUE_FILTERED))
+n_total <- length(unique(results_test4$analysis_change$all$coefficients$ANALYTE_NAME))
 cat("  Probes with BH_P_VALUE_FILTERED: ", n_filtered_bh, " / ", n_total, "\n")
 
 cat("\nLevel Results\n")
-print_results_summary(results_test4$level$all, "Level: All probes (with BH_P_VALUE_FILTERED column)")
-n_filtered_bh <- sum(!is.na(results_test4$level$all$coefficients$BH_P_VALUE_FILTERED))
-n_total <- length(unique(results_test4$level$all$coefficients$ANALYTE_NAME))
+print_results_summary(results_test4$analysis_level$all, "Level: All probes (with BH_P_VALUE_FILTERED column)")
+n_filtered_bh <- sum(!is.na(results_test4$analysis_level$all$coefficients$BH_P_VALUE_FILTERED))
+n_total <- length(unique(results_test4$analysis_level$all$coefficients$ANALYTE_NAME))
 cat("  Probes with BH_P_VALUE_FILTERED: ", n_filtered_bh, " / ", n_total, "\n")
 cat("\n")
 
-cat("Top-Level Structure Checks (both change and level)\n")
+cat("Top-Level Structure Checks\n")
 test4_top_pass <- run_checks(check_top_level_structure(results_test4))
 cat("\n")
 
 cat("Change Structural Checks\n")
-test4_change_struct_pass <- run_checks(check_dnam_structure(results_test4$change, expected_fu_levels = c(1, 2), filtered_probes))
+test4_change_struct_pass <- run_checks(check_dnam_structure(results_test4$analysis_change, expected_fu_levels = c(1, 2), filtered_probes))
 cat("\n")
 
 cat("Level Structural Checks\n")
-test4_level_struct_pass <- run_checks(check_dnam_structure(results_test4$level, expected_fu_levels = c(1, 2), filtered_probes))
+test4_level_struct_pass <- run_checks(check_dnam_structure(results_test4$analysis_level, expected_fu_levels = c(1, 2), filtered_probes))
+cat("\n")
+
+cat("Reports Structural Checks\n")
+test4_reports_pass <- run_checks(check_reports_structure(results_test4))
 cat("\n")
 
 cat("Change Treatment Effect Validation\n")
-test4_change_te_pass <- run_checks(validate_treatment_effects_multi_fu(results_test4$change$all, method = "emmeans"))
+test4_change_te_pass <- run_checks(validate_treatment_effects_multi_fu(results_test4$analysis_change$all, method = "emmeans"))
 cat("\n")
 
 cat("Level Treatment Effect Validation\n")
-test4_level_te_pass <- run_checks(validate_treatment_effects_multi_fu(results_test4$level$all, method = "emmeans"))
+test4_level_te_pass <- run_checks(validate_treatment_effects_multi_fu(results_test4$analysis_level$all, method = "emmeans"))
 cat("\n")
 
 test4_pass <- test4_top_pass && test4_change_struct_pass && test4_level_struct_pass &&
-              test4_change_te_pass && test4_level_te_pass
+              test4_reports_pass && test4_change_te_pass && test4_level_te_pass
 
 # =============================================================================
 # SUMMARY
