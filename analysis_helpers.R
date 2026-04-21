@@ -419,39 +419,16 @@
 
 
 .run_stratified_analysis <- function(pheno_list, omics_list, omics_type,
-                                     additional_covariates, response_type = c("change", "level")) {
+                                     additional_covariates, response_type = c("change", "level"),
+                                     filtered_probes = NULL) {
 
   response_type <- match.arg(response_type)
-
-  filtered_probes <- NULL
-  if (omics_type == "DNAm") {
-    full_probes <- readRDS("Data/FAST_epicv1_epicv2_probe_list.rds")
-    filtered_probes <- readRDS("Data/FAST_epicv1_epicv2_sugden_TruD_probe_list.rds")
-
-    available_probes <- omics_list$all$ANALYTE_NAME
-    .validate_dnam_probe_coverage(full_probes, filtered_probes, available_probes)
-
-    omics_list <- .subset_omics_list(omics_list, full_probes)
-  }
 
   outputs <- list(all = NULL, male = NULL, female = NULL)
 
   for (dataset in c("all", "male", "female")) {
 
-    if (is.null(pheno_list[[dataset]])) {
-      next
-    }
-
-    pheno_report <- .create_pheno_data_report(pheno_list[[dataset]])
-    omics_report <- .create_omics_data_report(pheno_list[[dataset]], omics_list[[dataset]])
-
-    if (!is.null(additional_covariates)) {
-      covariates_report <- .create_addx_covariate_report(pheno_list[[dataset]], additional_covariates)
-    } else {
-      covariates_report <- NULL
-    }
-
-    randomization_report <- .create_randomization_report(pheno_list[[dataset]], omics_list[[dataset]])
+    if (is.null(pheno_list[[dataset]])) next
 
     analysis_results <- .perform_analysis(
       pheno_list[[dataset]],
@@ -463,16 +440,12 @@
     )
 
     outputs[[dataset]] <- list(
-      coefficients = analysis_results$coefficients,
-      treatment_effects = analysis_results$treatment_effects,
-      omics_summary = omics_report,
-      pheno_summary = pheno_report,
-      covariates_summary = covariates_report,
-      randomization_summary = randomization_report
+      coefficients      = analysis_results$coefficients,
+      treatment_effects = analysis_results$treatment_effects
     )
   }
 
-  if (omics_type == "DNAm") {
+  if (!is.null(filtered_probes)) {
     outputs <- .add_filtered_bh_correction(outputs, filtered_probes)
   }
 

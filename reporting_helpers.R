@@ -236,3 +236,33 @@
     return(NULL)
   }
 }
+
+
+.generate_reports <- function(pheno_list, omics_list, additional_covariates = NULL) {
+
+  reports <- list(all = NULL, male = NULL, female = NULL)
+
+  for (dataset in c("all", "male", "female")) {
+    if (is.null(pheno_list[[dataset]])) next
+
+    pheno_report <- .create_pheno_data_report(pheno_list[[dataset]])
+    omics_report <- .create_omics_data_report(pheno_list[[dataset]], omics_list[[dataset]])
+
+    if (!is.null(additional_covariates)) {
+      covariates_report <- .create_addx_covariate_report(pheno_list[[dataset]], additional_covariates)
+    } else {
+      covariates_report <- NULL
+    }
+
+    randomization_report <- .create_randomization_report(pheno_list[[dataset]], omics_list[[dataset]])
+
+    reports[[dataset]] <- list(
+      pheno_summary         = pheno_report,
+      omics_summary         = omics_report,
+      covariates_summary    = covariates_report,
+      randomization_summary = randomization_report
+    )
+  }
+
+  return(reports)
+}
