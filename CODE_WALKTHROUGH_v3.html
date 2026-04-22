@@ -355,14 +355,18 @@ display: none;
 <div id="fast-omics-was-pipeline-code-walkthrough-v3" class="section level1">
 <h1>FAST Omics WAS Pipeline: Code Walkthrough (v3)</h1>
 <p>This walkthrough matches the current pipeline behavior in
-<code>main.R</code>, which runs two parallel analyses
-(<code>change</code> and <code>level</code>) and standardizes inference
-on <code>lm()</code> / <code>lmerTest::lmer()</code> (no limma).</p>
+<code>main.R</code>. The pipeline exposes two public functions:
+<code>FAST_omics_WAS()</code> runs the statistical analyses
+(<code>analysis_change</code> and <code>analysis_level</code>) with
+parallelization and optional checkpointing;
+<code>FAST_omics_WAS_reports()</code> generates QC reports
+independently. Both standardize inference on <code>lm()</code> /
+<code>lmerTest::lmer()</code>.</p>
 <div id="table-of-contents" class="section level2">
 <h2>Table of Contents</h2>
 <ol style="list-style-type: decimal">
 <li><a href="#file-structure">File Structure</a></li>
-<li><a href="#main-function">Main Function</a></li>
+<li><a href="#main-functions">Main Functions</a></li>
 <li><a href="#accepted-inputs">Accepted Inputs</a></li>
 <li><a href="#input-validation">Input Validation</a></li>
 <li><a href="#high-level-pipeline-flow">High-Level Pipeline
@@ -374,6 +378,8 @@ Flow</a></li>
 Linear Regression (LM)</a></li>
 <li><a href="#analysis-method-2-linear-mixed-effects-lme4">Analysis
 Method 2: Linear Mixed Effects (LME4)</a></li>
+<li><a href="#parallelization-and-checkpointing">Parallelization and
+Checkpointing</a></li>
 <li><a href="#multiple-testing-correction">Multiple Testing
 Correction</a></li>
 <li><a href="#dnam-probe-sets-and-filtered-bh">DNAm Probe Sets and
@@ -385,12 +391,13 @@ Filtered BH</a></li>
 </div>
 <div id="file-structure" class="section level2">
 <h2>File Structure</h2>
-<pre><code>main.R                  # Public API: FAST_omics_WAS()
-validation_helpers.R    # Input validation and data subsetting
-analysis_helpers.R      # Statistical analysis (lm / lmerTest)
-reporting_helpers.R     # QC and summary report generation
-plotting_helpers.R      # QQ + volcano plotting from treatment_effects
-test_comprehensive.R    # Test suite covering key scenarios</code></pre>
+<pre><code>main.R                        # Public API: FAST_omics_WAS(), FAST_omics_WAS_reports()
+validation_helpers.R          # Input validation and data subsetting
+analysis_helpers.R            # Statistical analysis (lm / lmerTest), parallelization, checkpointing
+reporting_helpers.R           # QC and summary report generation
+plotting_helpers.R            # QQ + volcano plotting from treatment_effects
+test_comprehensive.R          # Functional test suite (2x2 scenario matrix)
+test_parallel_checkpoint.R    # Parallelization and checkpointing tests</code></pre>
 <div id="function-locations" class="section level3">
 <h3>Function Locations</h3>
 <table>
@@ -407,7 +414,8 @@ test_comprehensive.R    # Test suite covering key scenarios</code></pre>
 <tbody>
 <tr>
 <td><code>main.R</code></td>
-<td><code>FAST_omics_WAS()</code></td>
+<td><code>FAST_omics_WAS()</code>,
+<code>FAST_omics_WAS_reports()</code></td>
 </tr>
 <tr>
 <td><code>validation_helpers.R</code></td>
@@ -427,7 +435,8 @@ test_comprehensive.R    # Test suite covering key scenarios</code></pre>
 </tr>
 <tr>
 <td><code>reporting_helpers.R</code></td>
-<td><code>.create_pheno_data_report()</code>,
+<td><code>.generate_reports()</code>,
+<code>.create_pheno_data_report()</code>,
 <code>.create_omics_data_report()</code>,
 <code>.create_addx_covariate_report()</code>,
 <code>.create_randomization_report()</code></td>
@@ -437,29 +446,59 @@ test_comprehensive.R    # Test suite covering key scenarios</code></pre>
 <hr />
 </div>
 </div>
-<div id="main-function" class="section level2">
-<h2>Main Function</h2>
+<div id="main-functions" class="section level2">
+<h2>Main Functions</h2>
 <p><strong>File</strong>: <code>main.R</code></p>
 <pre class="r"><code>FAST_omics_WAS &lt;- function(pheno,
                            omics,
-                           omics_type = &quot;Proteomics&quot;,
-                           additional_covariates = NULL)</code></pre>
-<div id="what-it-does" class="section level3">
-<h3>What it does</h3>
+                           omics_type            = &quot;Proteomics&quot;,
+                           additional_covariates = NULL,
+                           n_cores               = NULL,
+                           checkpoint_dir        = NULL,
+                           checkpoint_batch_size = 2000L)
+
+FAST_omics_WAS_reports &lt;- function(pheno,
+                                   omics,
+                                   omics_type            = &quot;Proteomics&quot;,
+                                   additional_covariates = NULL)</code></pre>
+<div id="fast_omics_was-what-it-does" class="section level3">
+<h3>FAST_omics_WAS — What it does</h3>
 <ol style="list-style-type: decimal">
+<li>Resolves <code>n_cores</code> (auto-detects if <code>NULL</code>),
+sets <code>future::plan(multisession)</code>, restores previous plan on
+exit</li>
 <li>Validates <code>omics_type</code>, <code>pheno</code>, and
-<code>omics</code> (and creates gender strata)</li>
-<li>Runs the analysis twice:
+<code>omics</code> (and creates sex strata)</li>
+<li>For <code>omics_type == &quot;DNAm&quot;</code>: loads probe lists, validates
+coverage, and subsets omics once</li>
+<li>Runs the analysis twice in parallel across analytes:
 <ul>
 <li>once with <code>response_type = &quot;change&quot;</code></li>
 <li>once with <code>response_type = &quot;level&quot;</code></li>
 </ul></li>
-<li>Returns a nested results object:</li>
+<li>Returns:</li>
 </ol>
 <pre class="r"><code>list(
-  change = &lt;results_by_stratum&gt;,
-  level  = &lt;results_by_stratum&gt;
+  analysis_change = &lt;analysis_by_stratum&gt;,
+  analysis_level  = &lt;analysis_by_stratum&gt;
 )</code></pre>
+</div>
+<div id="fast_omics_was_reports-what-it-does" class="section level3">
+<h3>FAST_omics_WAS_reports — What it does</h3>
+<ol style="list-style-type: decimal">
+<li>Runs the same validation as <code>FAST_omics_WAS</code> (steps 2–3
+above)</li>
+<li>Generates QC reports via <code>.generate_reports()</code></li>
+<li>Returns:</li>
+</ol>
+<pre class="r"><code>list(
+  all    = &lt;report&gt;,
+  male   = &lt;report&gt;,
+  female = &lt;report&gt;
+)</code></pre>
+<p>Reports and analysis are intentionally separate: analyses can be
+parallelized and checkpointed across many cores while reports are
+generated independently.</p>
 <hr />
 </div>
 </div>
@@ -585,24 +624,37 @@ pairs (keeps first row)</li>
 <h2>High-Level Pipeline Flow</h2>
 <pre><code>FAST_omics_WAS()
 │
+├── resolve n_cores; set future::plan(multisession); register on.exit to restore plan
 ├── .validate_omics_type()
-├── .validate_pheno() → pheno_list (all/male/female + requires_mixed_effects)
-├── .validate_omics() → omics_list (all/male/female)
+├── .validate_pheno()  → pheno_list (all/male/female + requires_mixed_effects)
+├── .validate_omics()  → omics_list (all/male/female)
 │
-├── .run_stratified_analysis(..., response_type = &quot;change&quot;) → results$change
-└── .run_stratified_analysis(..., response_type = &quot;level&quot;)  → results$level</code></pre>
+├── [DNAm only] load probe lists; validate overlap; subset omics_list to full probe set
+│
+├── .run_stratified_analysis(..., &quot;change&quot;, checkpoint_dir, batch_size)  → results$analysis_change
+└── .run_stratified_analysis(..., &quot;level&quot;,  checkpoint_dir, batch_size)  → results$analysis_level
+
+FAST_omics_WAS_reports()
+│
+├── .validate_omics_type()
+├── .validate_pheno()  → pheno_list
+├── .validate_omics()  → omics_list
+│
+├── [DNAm only] load probe lists; validate overlap; subset omics_list to full probe set
+│
+└── .generate_reports()  → reports (all/male/female)</code></pre>
+<p><code>.generate_reports()</code> loops over strata (<code>all</code>,
+<code>male</code>, <code>female</code>) once and builds
+pheno/omics/covariates/randomization summaries — these are independent
+of response type and analyte-level model fits.</p>
 <p>Inside <code>.run_stratified_analysis()</code>:</p>
 <ol style="list-style-type: decimal">
-<li><strong>DNAm only</strong>: load probe lists; validate overlap;
-subset omics to the full probe set</li>
 <li>For each stratum (<code>all</code>, <code>male</code>,
-<code>female</code>):
-<ul>
-<li>generate reports (pheno/omics/covariates/randomization)</li>
-<li>run <code>.perform_analysis(..., response_type)</code></li>
-</ul></li>
-<li><strong>DNAm only</strong>: add <code>BH_P_VALUE_FILTERED</code> for
-a filtered probe set</li>
+<code>female</code>): construct checkpoint subdir path
+(<code>{checkpoint_dir}/{response_type}/{stratum}/</code>), run
+<code>.perform_analysis(...)</code></li>
+<li><strong>DNAm only</strong>: add <code>BH_P_VALUE_FILTERED</code> to
+coefficients and treatment effects for the filtered probe set</li>
 </ol>
 <hr />
 </div>
@@ -651,9 +703,37 @@ level in the post-baseline data:</p>
 (<code>.perform_lm_analysis()</code>)</p>
 <p>Used when there is a single post-baseline follow-up level (max FU ==
 1).</p>
+<div id="parallelization-and-checkpointing" class="section level3">
+<h3>Parallelization and Checkpointing</h3>
+<p>Both <code>.perform_lm_analysis()</code> and
+<code>.perform_lme4_analysis()</code> use the same execution
+strategy:</p>
+<ol style="list-style-type: decimal">
+<li>Analytes are split into batches of
+<code>checkpoint_batch_size</code> (default 2000)</li>
+<li>For each batch:
+<ul>
+<li>If <code>checkpoint_dir</code> is set and a batch file already
+exists: load from disk and skip</li>
+<li>Otherwise: run <code>furrr::future_map()</code> over the batch in
+parallel, then save the batch result atomically (write to
+<code>.tmp</code>, rename) if <code>checkpoint_dir</code> is set</li>
+</ul></li>
+<li>After all batches: <code>do.call(rbind, ...)</code> assembles the
+full results</li>
+</ol>
+<p><code>furrr::future_map()</code> uses whatever
+<code>future::plan()</code> is active — set by
+<code>FAST_omics_WAS()</code> before calling into the helpers. With
+<code>n_cores = 1</code> the plan is <code>sequential</code> and there
+is no parallelization overhead.</p>
+<p>BH correction runs once on the full assembled results after all
+batches complete, so it always reflects the correct multiple-testing
+burden regardless of batch boundaries.</p>
+</div>
 <div id="model" class="section level3">
 <h3>Model</h3>
-<p>For each analyte (looping across rows of <code>omics</code>):</p>
+<p>For each analyte:</p>
 <pre><code>response ~ CONTROL_STATUS + FEMALE + analyte_baseline + additional_covariates</code></pre>
 <p>Notes:</p>
 <ul>
@@ -723,20 +803,19 @@ table</li>
 </div>
 <div id="dnam-probe-sets-and-filtered-bh" class="section level2">
 <h2>DNAm Probe Sets and Filtered BH</h2>
-<p><strong>File</strong>: <code>analysis_helpers.R</code>
+<p><strong>File</strong>: <code>main.R</code> and
+<code>analysis_helpers.R</code>
 (<code>.run_stratified_analysis()</code>)</p>
 <p>For <code>omics_type == &quot;DNAm&quot;</code>:</p>
 <ol style="list-style-type: decimal">
-<li>The pipeline reads two probe lists from <code>Data/</code>:
-<ul>
-<li>a “full” probe set used for the actual model fits</li>
-<li>a “filtered” probe set used only for an alternate BH correction</li>
-</ul></li>
-<li>It subsets the input omics to the full probe set prior to
-analysis.</li>
-<li>After fitting, it adds <code>BH_P_VALUE_FILTERED</code> for probes
-in the filtered set (and leaves it as <code>NA</code> for other
-probes).</li>
+<li><code>main.R</code> reads two probe lists from <code>Data/</code>,
+validates overlap, and subsets omics to the full probe set — this
+happens once before reports or analysis run.</li>
+<li><code>.run_stratified_analysis()</code> receives
+<code>filtered_probes</code> and after fitting adds
+<code>BH_P_VALUE_FILTERED</code> to <code>coefficients</code> and
+<code>treatment_effects</code> for probes in the filtered set (and
+leaves it as <code>NA</code> for other probes).</li>
 </ol>
 <p>This allows comparing significance under different multiple-testing
 burdens without re-running the model fits.</p>
@@ -744,15 +823,18 @@ burdens without re-running the model fits.</p>
 </div>
 <div id="reporting-pipeline" class="section level2">
 <h2>Reporting Pipeline</h2>
-<p><strong>File</strong>: <code>reporting_helpers.R</code></p>
-<p>Each stratum includes QC/report tables:</p>
+<p><strong>File</strong>: <code>reporting_helpers.R</code>
+(<code>.generate_reports()</code>)</p>
+<p>Reports are generated once (independent of response type) and
+stratified the same way as the analysis (<code>all</code>,
+<code>male</code>, <code>female</code>). Each stratum contains:</p>
 <ul>
 <li><code>pheno_summary</code>: counts per (<code>FU</code>,
 <code>FEMALE</code>) cell (subjects + samples)</li>
 <li><code>omics_summary</code>: per-analyte baseline distribution
 summary (FU == 0)</li>
 <li><code>covariates_summary</code>: baseline covariate summaries (if
-requested)</li>
+requested); NULL otherwise</li>
 <li><code>randomization_summary</code>: baseline balance check per
 analyte (Welch t-test)</li>
 </ul>
@@ -760,22 +842,20 @@ analyte (Welch t-test)</li>
 </div>
 <div id="results-output" class="section level2">
 <h2>Results Output</h2>
-<p>Top-level structure:</p>
-<pre class="r"><code>results$change$all
-results$change$male
-results$change$female
+<div id="fast_omics_was-return-value" class="section level3">
+<h3><code>FAST_omics_WAS()</code> return value</h3>
+<pre class="r"><code>results$analysis_change$all
+results$analysis_change$male
+results$analysis_change$female
 
-results$level$all
-results$level$male
-results$level$female</code></pre>
-<p>Within a stratum (example: <code>results$change$all</code>):</p>
+results$analysis_level$all
+results$analysis_level$male
+results$analysis_level$female</code></pre>
+<p>Within each stratum (example:
+<code>results$analysis_change$all</code>):</p>
 <pre class="r"><code>list(
-  coefficients = data.frame(...),           # All fixed-effect coefficients
-  treatment_effects = data.frame(...),      # Treatment-control effects per FU
-  omics_summary = data.frame(...),          # Baseline omics distribution summary
-  pheno_summary = data.frame(...),          # Subject/sample counts per (FU, FEMALE)
-  covariates_summary = data.frame(...)|NULL,# Baseline covariate summaries
-  randomization_summary = data.frame(...)   # Baseline balance checks per analyte
+  coefficients      = data.frame(...),  # All fixed-effect coefficients
+  treatment_effects = data.frame(...)   # Treatment-control effects per FU
 )</code></pre>
 <p>Key columns:</p>
 <ul>
@@ -788,6 +868,20 @@ results$level$female</code></pre>
 <code>P_VALUE</code>, <code>BH_P_VALUE</code> (+
 <code>BH_P_VALUE_FILTERED</code> for DNAm)</li>
 </ul>
+</div>
+<div id="fast_omics_was_reports-return-value" class="section level3">
+<h3><code>FAST_omics_WAS_reports()</code> return value</h3>
+<pre class="r"><code>reports$all
+reports$male
+reports$female</code></pre>
+<p>Within each stratum (example: <code>reports$all</code>):</p>
+<pre class="r"><code>list(
+  pheno_summary         = data.frame(...),      # Subject/sample counts per (FU, FEMALE)
+  omics_summary         = data.frame(...),      # Baseline omics distribution summary
+  covariates_summary    = data.frame(...)|NULL, # Baseline covariate summaries
+  randomization_summary = data.frame(...)       # Baseline balance checks per analyte
+)</code></pre>
+</div>
 </div>
 </div>
 

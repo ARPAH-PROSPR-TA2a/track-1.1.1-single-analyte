@@ -490,24 +490,76 @@ factor, or logical.</p>
 <pre class="r"><code>additional_covariates = c(&quot;age&quot;, &quot;bmi&quot;, &quot;race&quot;)</code></pre>
 <hr />
 </div>
+<div id="n_cores-fast_omics_was-only" class="section level3">
+<h3><code>n_cores</code> <em>(FAST_omics_WAS only)</em></h3>
+<p>Integer. Number of cores to use for parallelizing the per-analyte
+model fits. Defaults to <code>NULL</code>, which auto-detects as
+<code>max(1, detectCores() - 1)</code>. Set to <code>1</code> to run
+serially.</p>
+<p>Note: <code>detectCores()</code> may overcount in HPC/container
+environments — set explicitly if running on a cluster with allocated
+core limits.</p>
+<hr />
+</div>
+<div id="checkpoint_dir-fast_omics_was-only" class="section level3">
+<h3><code>checkpoint_dir</code> <em>(FAST_omics_WAS only)</em></h3>
+<p>Optional character string. Path to a directory for saving per-batch
+checkpoint files. If <code>NULL</code> (default), checkpointing is
+disabled and behavior is unchanged. If provided, completed batches are
+written atomically to disk and reloaded on resume, so an interrupted run
+can continue from where it left off.</p>
+<p>The directory structure created under
+<code>checkpoint_dir</code>:</p>
+<pre><code>checkpoint_dir/
+  change/all/    batch_1.rds, batch_2.rds, ...
+  change/male/   batch_1.rds, ...
+  change/female/ batch_1.rds, ...
+  level/all/     batch_1.rds, ...
+  level/male/    batch_1.rds, ...
+  level/female/  batch_1.rds, ...</code></pre>
+<p><strong>Important</strong>: checkpoint files are tied to analyte
+ordering and batch size. Do not change the <code>omics</code> data or
+<code>checkpoint_batch_size</code> between a run and its resume.</p>
+<hr />
+</div>
+<div id="checkpoint_batch_size-fast_omics_was-only" class="section level3">
+<h3><code>checkpoint_batch_size</code> <em>(FAST_omics_WAS
+only)</em></h3>
+<p>Integer. Number of analytes per checkpoint batch. Default:
+<code>2000</code>. Only relevant when <code>checkpoint_dir</code> is
+set. Larger batches mean fewer files and less I/O overhead; smaller
+batches mean less lost work if a crash occurs mid-batch.</p>
+<hr />
+</div>
 </div>
 <div id="outputs" class="section level2">
 <h2>Outputs</h2>
-<p><code>FAST_omics_WAS()</code> returns a list with three top-level
-elements:</p>
+<div id="fast_omics_was" class="section level3">
+<h3><code>FAST_omics_WAS()</code></h3>
+<p>Returns a list with two top-level elements:</p>
 <pre class="r"><code>list(
   analysis_change = ...,   # Change-score models (FU value − baseline value)
-  analysis_level  = ...,   # Level models (absolute FU value)
-  reports         = ...    # QC and data summaries (generated once, shared)
+  analysis_level  = ...    # Level models (absolute FU value)
 )</code></pre>
-<p>Each of the three elements is stratified the same way:</p>
+<p>Each element is stratified the same way:</p>
+<pre class="r"><code>$all     # Full dataset
+$male    # Male subjects only  (NULL if dataset is single-sex)
+$female  # Female subjects only (NULL if dataset is single-sex)</code></pre>
+</div>
+<div id="fast_omics_was_reports" class="section level3">
+<h3><code>FAST_omics_WAS_reports()</code></h3>
+<p>Returns a list of QC and data summary reports, stratified the same
+way:</p>
 <pre class="r"><code>$all     # Full dataset
 $male    # Male subjects only  (NULL if dataset is single-sex)
 $female  # Female subjects only (NULL if dataset is single-sex)</code></pre>
 <hr />
 </div>
-<div id="analysis_change-and-analysis_level" class="section level2">
-<h2><code>$analysis_change</code> and <code>$analysis_level</code></h2>
+</div>
+<div id="fast_omics_was-analysis-outputs" class="section level2">
+<h2><code>FAST_omics_WAS()</code> — Analysis Outputs</h2>
+<div id="analysis_change-and-analysis_level" class="section level3">
+<h3><code>$analysis_change</code> and <code>$analysis_level</code></h3>
 <p>Each stratum contains two tables: <code>$coefficients</code> and
 <code>$treatment_effects</code>.</p>
 <p>The <code>change</code> response is
@@ -519,6 +571,7 @@ the treatment effect on the <em>change from baseline</em>, while
 <code>level</code> gives the treatment effect on the <em>absolute
 post-treatment level</em>.</p>
 <hr />
+</div>
 <div id="coefficients" class="section level3">
 <h3><code>$coefficients</code></h3>
 <p>All fixed-effect coefficients from the fitted model, for every
@@ -664,14 +717,13 @@ separately within each <code>FU</code> level across all analytes</td>
 <hr />
 </div>
 </div>
-<div id="reports" class="section level2">
-<h2><code>$reports</code></h2>
-<p>Generated once and shared across <code>analysis_change</code> and
-<code>analysis_level</code>. Each stratum (<code>$all</code>,
-<code>$male</code>, <code>$female</code>) contains four tables.</p>
+<div id="fast_omics_was_reports-report-outputs" class="section level2">
+<h2><code>FAST_omics_WAS_reports()</code> — Report Outputs</h2>
+<p>Each stratum (<code>$all</code>, <code>$male</code>,
+<code>$female</code>) contains four tables.</p>
 <hr />
-<div id="reports...pheno_summary" class="section level3">
-<h3><code>$reports$...$pheno_summary</code></h3>
+<div id="pheno_summary" class="section level3">
+<h3><code>$pheno_summary</code></h3>
 <p>One row per <code>(FU, FEMALE)</code> cell. Subject-level counts
 (<code>N_SUBJECTS</code>, <code>N_CONTROL</code>,
 <code>N_TREATMENT</code>) deduplicate by <code>SUBJECT_ID</code> so
@@ -730,8 +782,8 @@ timepoint</td>
 </table>
 <hr />
 </div>
-<div id="reports...omics_summary" class="section level3">
-<h3><code>$reports$...$omics_summary</code></h3>
+<div id="omics_summary" class="section level3">
+<h3><code>$omics_summary</code></h3>
 <p>Per-analyte baseline distribution, computed at baseline,
 <code>FU == 0</code>, only. Describes the pre-treatment reference
 distribution for each feature.</p>
@@ -782,8 +834,8 @@ protein_D      178            0.781   0.769    0.224   0.213   1.445</code></pre
 </table>
 <hr />
 </div>
-<div id="reports...covariates_summary" class="section level3">
-<h3><code>$reports$...$covariates_summary</code></h3>
+<div id="covariates_summary" class="section level3">
+<h3><code>$covariates_summary</code></h3>
 <p>Only present when <code>additional_covariates</code> is specified;
 <code>NULL</code> otherwise. One row per covariate. The
 <code>SUMMARY</code> column is a <strong>list column</strong> — each
@@ -796,10 +848,10 @@ bmi              numeric   3      list(mean=27.1, median=26.8, sd=4.2, min=18.5,
 race             factor    0      list(n_levels=3, level_names=c(&quot;1&quot;,&quot;2&quot;,&quot;3&quot;), counts=c(89,54,32))
 smoker           logical   1      list(n_true=74, n_false=101)</code></pre>
 <p>To access a summary for a specific covariate:</p>
-<pre class="r"><code>results$reports$all$covariates_summary$SUMMARY[[1]]  # by position
+<pre class="r"><code>reports$all$covariates_summary$SUMMARY[[1]]  # by position
 # or
-idx &lt;- which(results$reports$all$covariates_summary$COVARIATE_NAME == &quot;age&quot;)
-results$reports$all$covariates_summary$SUMMARY[[idx]]</code></pre>
+idx &lt;- which(reports$all$covariates_summary$COVARIATE_NAME == &quot;age&quot;)
+reports$all$covariates_summary$SUMMARY[[idx]]</code></pre>
 <p><strong>Column descriptions:</strong></p>
 <table>
 <colgroup>
@@ -841,8 +893,8 @@ results$reports$all$covariates_summary$SUMMARY[[idx]]</code></pre>
 </table>
 <hr />
 </div>
-<div id="reports...randomization_summary" class="section level3">
-<h3><code>$reports$...$randomization_summary</code></h3>
+<div id="randomization_summary" class="section level3">
+<h3><code>$randomization_summary</code></h3>
 <p>Baseline balance check: a Welch’s t-test comparing treatment
 vs. control at <code>FU == 0</code> for each analyte. This is a
 diagnostic — in a well-randomized trial, no analyte should show a

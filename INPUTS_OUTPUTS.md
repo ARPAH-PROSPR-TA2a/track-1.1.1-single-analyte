@@ -76,19 +76,64 @@ additional_covariates = c("age", "bmi", "race")
 
 ---
 
+### `n_cores` *(FAST_omics_WAS only)*
+
+Integer. Number of cores to use for parallelizing the per-analyte model fits. Defaults to `NULL`, which auto-detects as `max(1, detectCores() - 1)`. Set to `1` to run serially.
+
+Note: `detectCores()` may overcount in HPC/container environments — set explicitly if running on a cluster with allocated core limits.
+
+---
+
+### `checkpoint_dir` *(FAST_omics_WAS only)*
+
+Optional character string. Path to a directory for saving per-batch checkpoint files. If `NULL` (default), checkpointing is disabled and behavior is unchanged. If provided, completed batches are written atomically to disk and reloaded on resume, so an interrupted run can continue from where it left off.
+
+The directory structure created under `checkpoint_dir`:
+
+```
+checkpoint_dir/
+  change/all/    batch_1.rds, batch_2.rds, ...
+  change/male/   batch_1.rds, ...
+  change/female/ batch_1.rds, ...
+  level/all/     batch_1.rds, ...
+  level/male/    batch_1.rds, ...
+  level/female/  batch_1.rds, ...
+```
+
+**Important**: checkpoint files are tied to analyte ordering and batch size. Do not change the `omics` data or `checkpoint_batch_size` between a run and its resume.
+
+---
+
+### `checkpoint_batch_size` *(FAST_omics_WAS only)*
+
+Integer. Number of analytes per checkpoint batch. Default: `2000`. Only relevant when `checkpoint_dir` is set. Larger batches mean fewer files and less I/O overhead; smaller batches mean less lost work if a crash occurs mid-batch.
+
+---
+
 ## Outputs
 
-`FAST_omics_WAS()` returns a list with three top-level elements:
+### `FAST_omics_WAS()`
+
+Returns a list with two top-level elements:
 
 ```r
 list(
   analysis_change = ...,   # Change-score models (FU value − baseline value)
-  analysis_level  = ...,   # Level models (absolute FU value)
-  reports         = ...    # QC and data summaries (generated once, shared)
+  analysis_level  = ...    # Level models (absolute FU value)
 )
 ```
 
-Each of the three elements is stratified the same way:
+Each element is stratified the same way:
+
+```r
+$all     # Full dataset
+$male    # Male subjects only  (NULL if dataset is single-sex)
+$female  # Female subjects only (NULL if dataset is single-sex)
+```
+
+### `FAST_omics_WAS_reports()`
+
+Returns a list of QC and data summary reports, stratified the same way:
 
 ```r
 $all     # Full dataset
@@ -98,7 +143,9 @@ $female  # Female subjects only (NULL if dataset is single-sex)
 
 ---
 
-## `$analysis_change` and `$analysis_level`
+## `FAST_omics_WAS()` — Analysis Outputs
+
+### `$analysis_change` and `$analysis_level`
 
 Each stratum contains two tables: `$coefficients` and `$treatment_effects`.
 
@@ -193,13 +240,13 @@ protein_C      2    0.198          0.077    0.011     0.044
 
 ---
 
-## `$reports`
+## `FAST_omics_WAS_reports()` — Report Outputs
 
-Generated once and shared across `analysis_change` and `analysis_level`. Each stratum (`$all`, `$male`, `$female`) contains four tables.
+Each stratum (`$all`, `$male`, `$female`) contains four tables.
 
 ---
 
-### `$reports$...$pheno_summary`
+### `$pheno_summary`
 
 One row per `(FU, FEMALE)` cell. Subject-level counts (`N_SUBJECTS`, `N_CONTROL`, `N_TREATMENT`) deduplicate by `SUBJECT_ID` so repeated samples for the same person at the same timepoint don't inflate counts. `N_SAMPLES` is the raw row count.
 
@@ -228,7 +275,7 @@ FU   FEMALE   N_SUBJECTS   N_CONTROL   N_TREATMENT   N_SAMPLES
 
 ---
 
-### `$reports$...$omics_summary`
+### `$omics_summary`
 
 Per-analyte baseline distribution, computed at baseline, `FU == 0`, only. Describes the pre-treatment reference distribution for each feature.
 
@@ -256,7 +303,7 @@ protein_D      178            0.781   0.769    0.224   0.213   1.445
 
 ---
 
-### `$reports$...$covariates_summary`
+### `$covariates_summary`
 
 Only present when `additional_covariates` is specified; `NULL` otherwise. One row per covariate. The `SUMMARY` column is a **list column** — each cell contains a named list whose contents depend on the covariate type.
 
@@ -273,10 +320,10 @@ smoker           logical   1      list(n_true=74, n_false=101)
 To access a summary for a specific covariate:
 
 ```r
-results$reports$all$covariates_summary$SUMMARY[[1]]  # by position
+reports$all$covariates_summary$SUMMARY[[1]]  # by position
 # or
-idx <- which(results$reports$all$covariates_summary$COVARIATE_NAME == "age")
-results$reports$all$covariates_summary$SUMMARY[[idx]]
+idx <- which(reports$all$covariates_summary$COVARIATE_NAME == "age")
+reports$all$covariates_summary$SUMMARY[[idx]]
 ```
 
 **Column descriptions:**
@@ -290,7 +337,7 @@ results$reports$all$covariates_summary$SUMMARY[[idx]]
 
 ---
 
-### `$reports$...$randomization_summary`
+### `$randomization_summary`
 
 Baseline balance check: a Welch's t-test comparing treatment vs. control at `FU == 0` for each analyte. This is a diagnostic — in a well-randomized trial, no analyte should show a significant difference at baseline.
 

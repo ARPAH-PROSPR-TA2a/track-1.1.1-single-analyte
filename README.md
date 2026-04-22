@@ -6,7 +6,7 @@ Methylation. It standardizes inference on `lm()` (single follow-up) and
 `lmerTest::lmer()` (multiple follow-ups) and automatically stratifies
 results by gender when data permits.
 
-The pipeline runs two parallel analyses and returns them alongside shared QC reports:
+The pipeline exposes two functions: `FAST_omics_WAS()` for the statistical analysis (parallelized, resumable) and `FAST_omics_WAS_reports()` for QC and data summary reports.
 
 ## Installation
 
@@ -38,12 +38,14 @@ The main function for conducting omics-wide association analyses.
 pheno <- read.csv("my_phenotype.csv")
 omics <- read.csv("my_omics_data.csv")
 
-# Run the association analysis
+# Run the association analysis (parallelized across 8 cores, with checkpointing)
 results <- FAST_omics_WAS(
-  pheno = pheno,
-  omics = omics,
+  pheno  = pheno,
+  omics  = omics,
   omics_type = "Proteomics",
-  additional_covariates = c("age", "bmi")
+  additional_covariates = c("age", "bmi"),
+  n_cores = 8,
+  checkpoint_dir = "checkpoints"
 )
 
 # View analysis results
@@ -53,9 +55,16 @@ head(results$analysis_change$all$treatment_effects)
 head(results$analysis_level$all$coefficients)
 head(results$analysis_level$all$treatment_effects)
 
-# Access data quality reports (shared across change and level)
-results$reports$all$pheno_summary
-results$reports$all$omics_summary
+# Generate QC reports separately
+reports <- FAST_omics_WAS_reports(
+  pheno  = pheno,
+  omics  = omics,
+  omics_type = "Proteomics",
+  additional_covariates = c("age", "bmi")
+)
+
+reports$all$pheno_summary
+reports$all$omics_summary
 ```
 
 ### Parameters
@@ -71,29 +80,71 @@ results$reports$all$omics_summary
     additional covariates to include in regression models. Must be
     column names in the `pheno` data frame. These columns must be
     numeric, factor, or logical.
+-   **`n_cores`** (integer, optional): Number of cores to use for
+    parallelization. Defaults to `NULL`, which auto-detects as
+    `max(1, detectCores() - 1)`. Set to `1` to run serially. Note:
+    `detectCores()` may overcount in HPC/container environments — set
+    explicitly if running on a cluster with allocated core limits.
+-   **`checkpoint_dir`** (character, optional): Path to a directory for
+    saving per-batch checkpoints. If `NULL` (default), checkpointing is
+    disabled. If provided, completed batches are saved to disk and
+    automatically reused on resume, so a crashed run can pick up where
+    it left off. The directory is created if it does not exist. See
+    [Checkpointing](#checkpointing) below.
+-   **`checkpoint_batch_size`** (integer): Number of analytes per
+    checkpoint batch. Default: `2000`. Only relevant when
+    `checkpoint_dir` is set.
 
 ### Return Value
 
-A list with three top-level elements:
+A list with two top-level elements:
 
 -   **`$analysis_change`**: Change-score analysis (follow-up minus baseline, baseline-adjusted)
 -   **`$analysis_level`**: Level analysis (absolute follow-up, baseline-adjusted)
--   **`$reports`**: QC and data summary reports (generated once, shared across both analyses)
 
-Each of `$analysis_change` and `$analysis_level` contains results stratified by gender. Male and female specific results are only generated if both sexes are present in the data:
+Each contains results stratified by sex. Male and female results are only generated if both sexes are present in the data:
 
 -   **`$all`**: Results from the full dataset
 -   **`$male`**: Results from male subset
 -   **`$female`**: Results from female subset
 
-Each stratum of `$analysis_change` and `$analysis_level` contains:
+Each stratum contains:
 
 -   **`$coefficients`**: Data frame of all model coefficients for each
     analyte (ANALYTE_NAME, COEFFICIENT, EFFECT_SIZE, SE, P_VALUE, BH_P_VALUE)
 -   **`$treatment_effects`**: Data frame of treatment effects at each
     follow-up level (ANALYTE_NAME, FU, EFFECT_SIZE, SE, P_VALUE, BH_P_VALUE)
 
-`$reports` is stratified the same way (`$all`, `$male`, `$female`). Each stratum contains:
+**DNAm only**: `BH_P_VALUE_FILTERED` is added to `coefficients` and
+`treatment_effects` for a pre-specified filtered probe set (useful for
+assessing significance under different multiple-testing burdens).
+
+---
+
+## FAST_omics_WAS_reports()
+
+Generates QC and data summary reports. Takes the same `pheno`, `omics`,
+`omics_type`, and `additional_covariates` arguments as `FAST_omics_WAS()`
+and runs the same input validation, but only produces reports — no model
+fitting.
+
+Separating reports from analysis allows long-running analyses to be
+parallelized and checkpointed without re-running reporting, and vice versa.
+
+### Quick Example
+
+``` r
+reports <- FAST_omics_WAS_reports(
+  pheno  = pheno,
+  omics  = omics,
+  omics_type = "Proteomics",
+  additional_covariates = c("age", "bmi")
+)
+```
+
+### Return Value
+
+A list stratified by sex (`$all`, `$male`, `$female`). Each stratum contains:
 
 -   **`$pheno_summary`**: Data frame with one row per (FU, FEMALE) cell
     giving N_SUBJECTS, N_CONTROL, N_TREATMENT (subject-level) and
@@ -105,9 +156,49 @@ Each stratum of `$analysis_change` and `$analysis_level` contains:
 -   **`$randomization_summary`**: Baseline balance check per analyte
     (Welch's t-test comparing treatment groups)
 
-**DNAm only**: `BH_P_VALUE_FILTERED` is added to `coefficients` and
-`treatment_effects` for a pre-specified filtered probe set (useful for
-assessing significance under different multiple-testing burdens).
+---
+
+## Checkpointing
+
+For large analyses (e.g. 750k+ DNAm probes), runs can take many hours.
+Passing `checkpoint_dir` enables fault-tolerant execution: analytes are
+processed in batches, and each completed batch is saved atomically to disk.
+If the run is interrupted, re-running with the same `checkpoint_dir` skips
+already-completed batches and continues from where it left off.
+
+``` r
+# First run — saves progress to checkpoints/
+results <- FAST_omics_WAS(
+  pheno, omics,
+  omics_type = "DNAm",
+  n_cores = 16,
+  checkpoint_dir = "checkpoints",
+  checkpoint_batch_size = 2000
+)
+
+# If interrupted, re-run the same call — completed batches are loaded from disk
+results <- FAST_omics_WAS(
+  pheno, omics,
+  omics_type = "DNAm",
+  n_cores = 16,
+  checkpoint_dir = "checkpoints",
+  checkpoint_batch_size = 2000
+)
+```
+
+Checkpoints are organized as:
+```
+checkpoints/
+  change/all/    batch_1.rds, batch_2.rds, ...
+  change/male/   batch_1.rds, ...
+  change/female/ batch_1.rds, ...
+  level/all/     batch_1.rds, ...
+  ...
+```
+
+**Important**: checkpoint files are tied to a specific analyte ordering. Do
+not change the `omics` data or `checkpoint_batch_size` between a run and its
+resume — doing so will produce incorrect results.
 
 ## Data Format Requirements
 
@@ -215,7 +306,8 @@ Source `plotting_helpers.R` and call `generate_all_plots()` on either the
 source("plotting_helpers.R")
 
 results <- FAST_omics_WAS(pheno, omics, omics_type = "DNAm",
-                          additional_covariates = c("age", "bmi"))
+                          additional_covariates = c("age", "bmi"),
+                          n_cores = 8)
 
 generate_all_plots(results$analysis_change)                          # saves to Figures/
 generate_all_plots(results$analysis_change, figures_dir = "my_dir")  # saves to my_dir/
