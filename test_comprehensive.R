@@ -291,7 +291,8 @@ results_test1 <- FAST_omics_WAS(
   pheno = pheno_single_fu,
   omics = omics,
   omics_type = "Proteomics",
-  additional_covariates = additional_covariates
+  additional_covariates = additional_covariates,
+  n_cores = 4
 )
 reports_test1 <- FAST_omics_WAS_reports(
   pheno = pheno_single_fu,
@@ -344,7 +345,8 @@ results_test2 <- FAST_omics_WAS(
   pheno = pheno_multi_fu,
   omics = omics,
   omics_type = "Proteomics",
-  additional_covariates = additional_covariates
+  additional_covariates = additional_covariates,
+  n_cores = 4
 )
 reports_test2 <- FAST_omics_WAS_reports(
   pheno = pheno_multi_fu,
@@ -397,7 +399,8 @@ results_test3 <- FAST_omics_WAS(
   pheno = pheno_single_fu,
   omics = omics,
   omics_type = "DNAm",
-  additional_covariates = additional_covariates
+  additional_covariates = additional_covariates,
+  n_cores = 4
 )
 reports_test3 <- FAST_omics_WAS_reports(
   pheno = pheno_single_fu,
@@ -462,7 +465,8 @@ results_test4 <- FAST_omics_WAS(
   pheno = pheno_multi_fu,
   omics = omics,
   omics_type = "DNAm",
-  additional_covariates = additional_covariates
+  additional_covariates = additional_covariates,
+  n_cores = 4
 )
 reports_test4 <- FAST_omics_WAS_reports(
   pheno = pheno_multi_fu,

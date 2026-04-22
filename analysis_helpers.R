@@ -62,25 +62,7 @@
     # Linear regression for single follow-up timepoint only
     # Extracts ALL fixed effect coefficients (treatment, covariates)
 
-    # Initialize results - raw coefficients
-    coefficients <- data.frame(
-      ANALYTE_NAME = character(),
-      COEFFICIENT = character(),
-      EFFECT_SIZE = numeric(),
-      SE = numeric(),
-      P_VALUE = numeric(),
-      stringsAsFactors = FALSE
-    )
-
-    # Initialize results - treatment effects (single FU for LM)
-    treatment_effects <- data.frame(
-      ANALYTE_NAME = character(),
-      FU = integer(),
-      EFFECT_SIZE = numeric(),
-      SE = numeric(),
-      P_VALUE = numeric(),
-      stringsAsFactors = FALSE
-    )
+    response_type <- match.arg(response_type)
 
     # Prepare data using shared helper
     prep <- .prepare_analysis_data(pheno_df, omics_df, pheno_baseline, omics_baseline)
@@ -89,7 +71,7 @@
     baseline_col_idx <- prep$baseline_col_idx
     omics_baseline_matrix <- prep$omics_baseline_matrix
 
-    # Pre-allocate model data template (avoid copying in loop)
+    # Model data template — each worker copies this and fills in analyte columns
     model_data <- data.frame(pheno_merged)
     model_data$analyte <- NA_real_
     model_data$analyte_baseline <- NA_real_
@@ -111,7 +93,6 @@
       formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
     }
 
-    # Pre-compute loop invariants
     analyte_names <- omics_df$ANALYTE_NAME
 
     # Get FU level for this analysis (should be single value in LM analysis)
@@ -119,113 +100,82 @@
     if (length(fu_level) != 1) {
       warning("LM analysis expects single FU level, found:", length(fu_level))
       if (length(fu_level) > 1) {
-        fu_level <- max(fu_level)  # Use max FU if multiple present
+        fu_level <- max(fu_level)
       } else {
-        return(NULL)  # No data to analyze
+        return(NULL)
       }
     }
-    
-    # Fit model for each analyte
-    for (i in seq_along(analyte_names)) {
+    fu_level <- as.integer(as.character(fu_level))
+
+    # Fit model for each analyte in parallel
+    analyte_results <- furrr::future_map(seq_along(analyte_names), function(i) {
       tryCatch({
-        analyte_name <- analyte_names[i]
-        
-        # Get raw FU analyte values for shared samples (convert data.frame row to numeric vector)
-        fu_values <- as.numeric(omics_df[i, shared_samples])
-        
-        # Get baseline analyte values using column position indexing
-        # (avoids issues with duplicate column names)
+        analyte_name  <- analyte_names[i]
+        fu_values     <- as.numeric(omics_df[i, shared_samples])
         baseline_vals <- omics_baseline_matrix[i, baseline_col_idx]
 
-        # Update model data with current analyte values
-        # response_type determines whether we model change or absolute level
-        if (match.arg(response_type) == "change") {
-          model_data$analyte <- fu_values - baseline_vals
+        md <- model_data
+        if (response_type == "change") {
+          md$analyte <- fu_values - baseline_vals
         } else {
-          model_data$analyte <- fu_values
+          md$analyte <- fu_values
         }
-        model_data$analyte_baseline <- baseline_vals
+        md$analyte_baseline <- baseline_vals
 
-         # Fit linear model
-         fit <- lm(as.formula(formula_str), data = model_data)
-         fit_summary <- summary(fit)
-         
-        # Extract all fixed effect coefficients
-        coef_table <- fit_summary$coefficients
+        coef_table <- summary(lm(as.formula(formula_str), data = md))$coefficients
 
-        # Loop through all coefficients
-        for (coef_name in rownames(coef_table)) {
-          # Extract coefficient info
-          effect_size <- coef_table[coef_name, "Estimate"]
-          se <- coef_table[coef_name, "Std. Error"]
-          p_value <- coef_table[coef_name, "Pr(>|t|)"]
+        coefs <- data.frame(
+          ANALYTE_NAME = analyte_name,
+          COEFFICIENT  = rownames(coef_table),
+          EFFECT_SIZE  = coef_table[, "Estimate"],
+          SE           = coef_table[, "Std. Error"],
+          P_VALUE      = coef_table[, "Pr(>|t|)"],
+          stringsAsFactors = FALSE,
+          row.names = NULL
+        )
 
-          # Add to coefficients
-          coefficients <- rbind(coefficients, data.frame(
-            ANALYTE_NAME = analyte_name,
-            COEFFICIENT = coef_name,
-            EFFECT_SIZE = effect_size,
-            SE = se,
-            P_VALUE = p_value,
-            stringsAsFactors = FALSE
-          ))
+        ctrl_idx <- grepl("^CONTROL_STATUS", rownames(coef_table))
+        te <- data.frame(
+          ANALYTE_NAME = analyte_name,
+          FU           = fu_level,
+          EFFECT_SIZE  = coef_table[ctrl_idx, "Estimate"],
+          SE           = coef_table[ctrl_idx, "Std. Error"],
+          P_VALUE      = coef_table[ctrl_idx, "Pr(>|t|)"],
+          stringsAsFactors = FALSE,
+          row.names = NULL
+        )
 
-          # Extract treatment effect (CONTROL_STATUS coefficient)
-          if (grepl("^CONTROL_STATUS", coef_name)) {
-            treatment_effects <- rbind(treatment_effects, data.frame(
-              ANALYTE_NAME = analyte_name,
-              FU = as.integer(as.character(fu_level)),
-              EFFECT_SIZE = effect_size,
-              SE = se,
-              P_VALUE = p_value,
-              stringsAsFactors = FALSE
-            ))
-          }
-        }
+        list(coefficients = coefs, treatment_effects = te)
 
-    }, error = function(e) {
-      warning("Error processing analyte '", analyte_names[i], "': ", e$message)
-    })
-  }
+      }, error = function(e) {
+        warning("Error processing analyte '", analyte_names[i], "': ", e$message)
+        NULL
+      })
+    }, .options = furrr::furrr_options(seed = TRUE))
 
-  # Return NULL if no results
-  if (nrow(coefficients) == 0) {
-    return(NULL)
-  }
+    analyte_results <- Filter(Negate(is.null), analyte_results)
 
-  return(list(
-    coefficients = coefficients,
-    treatment_effects = treatment_effects
-  ))
+    if (length(analyte_results) == 0) return(NULL)
+
+    coefficients      <- do.call(rbind, lapply(analyte_results, `[[`, "coefficients"))
+    treatment_effects <- do.call(rbind, lapply(analyte_results, `[[`, "treatment_effects"))
+    row.names(coefficients)      <- NULL
+    row.names(treatment_effects) <- NULL
+
+    return(list(
+      coefficients = coefficients,
+      treatment_effects = treatment_effects
+    ))
 }
 
 
 .perform_lme4_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL, response_type = c("change", "level")) {
 
-    # Load required packages
     require(lme4)
     require(lmerTest)
     require(emmeans)
 
-    # Initialize results - raw coefficients
-    coefficients <- data.frame(
-      ANALYTE_NAME = character(),
-      COEFFICIENT = character(),
-      EFFECT_SIZE = numeric(),
-      SE = numeric(),
-      P_VALUE = numeric(),
-      stringsAsFactors = FALSE
-    )
-
-    # Initialize results - treatment effects at each FU
-    treatment_effects <- data.frame(
-      ANALYTE_NAME = character(),
-      FU = integer(),
-      EFFECT_SIZE = numeric(),
-      SE = numeric(),
-      P_VALUE = numeric(),
-      stringsAsFactors = FALSE
-    )
+    response_type <- match.arg(response_type)
 
     # Prepare data using shared helper
     prep <- .prepare_analysis_data(pheno_df, omics_df, pheno_baseline, omics_baseline)
@@ -234,7 +184,7 @@
     baseline_col_idx <- prep$baseline_col_idx
     omics_baseline_matrix <- prep$omics_baseline_matrix
 
-    # Pre-allocate model data template (avoid copying in loop)
+    # Model data template — each worker copies this and fills in analyte columns
     model_data <- data.frame(pheno_merged)
     model_data$analyte <- NA_real_
     model_data$analyte_baseline <- NA_real_
@@ -258,84 +208,72 @@
     }
     formula_str <- paste(formula_str, "+ (1|SUBJECT_ID)")
 
-    # Pre-compute loop invariants
     analyte_names <- omics_df$ANALYTE_NAME
 
-    # Fit model for each analyte
-    for (i in seq_along(analyte_names)) {
+    # Fit model for each analyte in parallel
+    analyte_results <- furrr::future_map(seq_along(analyte_names), function(i) {
       tryCatch({
-        analyte_name <- analyte_names[i]
-        
-        # Get raw FU analyte values for shared samples (convert data.frame row to numeric vector)
-        fu_values <- as.numeric(omics_df[i, shared_samples])
-        
-        # Get baseline analyte values using column position indexing
-        # (avoids issues with duplicate column names)
+        analyte_name  <- analyte_names[i]
+        fu_values     <- as.numeric(omics_df[i, shared_samples])
         baseline_vals <- omics_baseline_matrix[i, baseline_col_idx]
 
-        # Update model data with current analyte values
-        # response_type determines whether we model change or absolute level
-        if (match.arg(response_type) == "change") {
-          model_data$analyte <- fu_values - baseline_vals
+        md <- model_data
+        if (response_type == "change") {
+          md$analyte <- fu_values - baseline_vals
         } else {
-          model_data$analyte <- fu_values
+          md$analyte <- fu_values
         }
-        model_data$analyte_baseline <- baseline_vals
+        md$analyte_baseline <- baseline_vals
 
-         # Fit lmer model
-         fit <- lmerTest::lmer(as.formula(formula_str), data = model_data, REML = FALSE,
-                               control = lmerControl(calc.derivs = FALSE))
+        fit <- lmerTest::lmer(as.formula(formula_str), data = md, REML = FALSE,
+                              control = lme4::lmerControl(calc.derivs = FALSE))
 
-        # Extract coefficients with Satterthwaite p-values
-        fit_summary <- summary(fit)
-        coef_table <- fit_summary$coefficients
+        coef_table <- summary(fit)$coefficients
 
-        # Extract all fixed effect coefficients
-        for (coef_name in rownames(coef_table)) {
-          effect_size <- coef_table[coef_name, "Estimate"]
-          se <- coef_table[coef_name, "Std. Error"]
-          p_value <- coef_table[coef_name, "Pr(>|t|)"]
+        coefs <- data.frame(
+          ANALYTE_NAME = analyte_name,
+          COEFFICIENT  = rownames(coef_table),
+          EFFECT_SIZE  = coef_table[, "Estimate"],
+          SE           = coef_table[, "Std. Error"],
+          P_VALUE      = coef_table[, "Pr(>|t|)"],
+          stringsAsFactors = FALSE,
+          row.names = NULL
+        )
 
-          coefficients <- rbind(coefficients, data.frame(
-            ANALYTE_NAME = analyte_name,
-            COEFFICIENT = coef_name,
-            EFFECT_SIZE = effect_size,
-            SE = se,
-            P_VALUE = p_value,
-            stringsAsFactors = FALSE
-          ))
-        }
+        emm      <- emmeans::emmeans(fit, ~ CONTROL_STATUS | FU)
+        contr_df <- as.data.frame(pairs(emm, reverse = TRUE))
 
-        # Extract treatment effects at each FU using emmeans
-        emm <- emmeans(fit, ~ CONTROL_STATUS | FU)
-        contr <- pairs(emm, reverse = TRUE)  # (treatment - control)
-        contr_df <- as.data.frame(contr)
+        te <- data.frame(
+          ANALYTE_NAME = analyte_name,
+          FU           = as.integer(as.character(contr_df$FU)),
+          EFFECT_SIZE  = contr_df$estimate,
+          SE           = contr_df$SE,
+          P_VALUE      = contr_df$p.value,
+          stringsAsFactors = FALSE,
+          row.names = NULL
+        )
 
-        for (j in seq_len(nrow(contr_df))) {
-          treatment_effects <- rbind(treatment_effects, data.frame(
-            ANALYTE_NAME = analyte_name,
-            FU = as.integer(as.character(contr_df$FU[j])),
-            EFFECT_SIZE = contr_df$estimate[j],
-            SE = contr_df$SE[j],
-            P_VALUE = contr_df$p.value[j],
-            stringsAsFactors = FALSE
-          ))
-        }
+        list(coefficients = coefs, treatment_effects = te)
 
-    }, error = function(e) {
-      warning("Error processing analyte '", analyte_names[i], "': ", e$message)
-    })
-  }
+      }, error = function(e) {
+        warning("Error processing analyte '", analyte_names[i], "': ", e$message)
+        NULL
+      })
+    }, .options = furrr::furrr_options(seed = TRUE, packages = c("lme4", "lmerTest", "emmeans")))
 
-  # Return NULL if no results
-  if (nrow(coefficients) == 0) {
-    return(NULL)
-  }
+    analyte_results <- Filter(Negate(is.null), analyte_results)
 
-  return(list(
-    coefficients = coefficients,
-    treatment_effects = treatment_effects
-  ))
+    if (length(analyte_results) == 0) return(NULL)
+
+    coefficients      <- do.call(rbind, lapply(analyte_results, `[[`, "coefficients"))
+    treatment_effects <- do.call(rbind, lapply(analyte_results, `[[`, "treatment_effects"))
+    row.names(coefficients)      <- NULL
+    row.names(treatment_effects) <- NULL
+
+    return(list(
+      coefficients = coefficients,
+      treatment_effects = treatment_effects
+    ))
 }
 
 

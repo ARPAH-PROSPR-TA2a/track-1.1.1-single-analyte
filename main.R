@@ -5,7 +5,23 @@ source("analysis_helpers.R")
 FAST_omics_WAS <- function(pheno,
                            omics,
                            omics_type = "Proteomics",
-                           additional_covariates = NULL) {
+                           additional_covariates = NULL,
+                           n_cores = NULL) {
+
+  # Auto-detect cores if not specified, leaving one free for the OS.
+  # Note: detectCores() may overcount in HPC/container environments — set
+  # n_cores explicitly if running on a cluster with allocated core limits.
+  if (is.null(n_cores)) {
+    n_cores <- max(1L, parallel::detectCores() - 1L)
+  }
+
+  old_plan <- future::plan()
+  on.exit(future::plan(old_plan), add = TRUE)
+  if (n_cores > 1L) {
+    future::plan(future::multisession, workers = n_cores)
+  } else {
+    future::plan(future::sequential)
+  }
 
   .validate_omics_type(omics_type)
 
