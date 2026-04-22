@@ -1,0 +1,379 @@
+# ===== TEST FOR PARALLELIZATION AND CHECKPOINTING =====
+#
+# Parallelization tests:
+#   P1: Serial (n_cores=1) vs parallel (n_cores=4) produce identical results - LM
+#   P2: Serial (n_cores=1) vs parallel (n_cores=4) produce identical results - LME4
+#   P3: n_cores=NULL auto-detects and runs without error
+#   P4: future::plan() is restored to sequential after FAST_omics_WAS returns
+#
+# Checkpointing tests:
+#   C1: Expected directory structure is created
+#   C2: Correct number of batch files per stratum/response combination
+#   C3: No .tmp files left after a clean run
+#   C4: Results with checkpointing match results without checkpointing
+#   C5: Resume test — delete subset of batch files, re-run, results match original
+#   C6: Untouched batch files are not recomputed during resume (mtime check)
+#   C7: checkpoint_batch_size larger than n_analytes (single batch)
+#   C8: checkpoint_batch_size = 1 (one analyte per batch)
+
+source("main.R")
+require(lme4)
+
+
+# ===== HELPERS =====
+
+run_checks <- function(checks) {
+  all_pass <- TRUE
+  for (name in names(checks)) {
+    status <- if (isTRUE(checks[[name]])) "PASS" else "FAIL"
+    cat(status, " ", name, "\n", sep = "")
+    if (!isTRUE(checks[[name]])) {
+      all_pass <- FALSE
+      if (is.character(checks[[name]])) cat("       ", checks[[name]], "\n")
+    }
+  }
+  all_pass
+}
+
+#' Compare two full results objects for equality across all strata and response types.
+#' Returns TRUE if equal, a descriptive string if not.
+compare_results <- function(r1, r2, tol = 1e-10) {
+  for (response in c("analysis_change", "analysis_level")) {
+    for (stratum in c("all", "male", "female")) {
+      for (slot in c("coefficients", "treatment_effects")) {
+        d1 <- r1[[response]][[stratum]][[slot]]
+        d2 <- r2[[response]][[stratum]][[slot]]
+
+        d1 <- d1[do.call(order, d1[c("ANALYTE_NAME", setdiff(names(d1), "ANALYTE_NAME")[1])]), ]
+        d2 <- d2[do.call(order, d2[c("ANALYTE_NAME", setdiff(names(d2), "ANALYTE_NAME")[1])]), ]
+        row.names(d1) <- NULL
+        row.names(d2) <- NULL
+
+        eq <- all.equal(d1, d2, tolerance = tol)
+        if (!isTRUE(eq)) {
+          return(paste0(response, "$", stratum, "$", slot, ": ", eq[1]))
+        }
+      }
+    }
+  }
+  TRUE
+}
+
+#' Count batch files under a checkpoint directory
+count_batch_files <- function(checkpoint_dir) {
+  files <- list.files(checkpoint_dir, pattern = "^batch_[0-9]+\\.rds$",
+                      recursive = TRUE, full.names = TRUE)
+  length(files)
+}
+
+#' Count .tmp files under a checkpoint directory
+count_tmp_files <- function(checkpoint_dir) {
+  files <- list.files(checkpoint_dir, pattern = "\\.tmp$",
+                      recursive = TRUE, full.names = TRUE)
+  length(files)
+}
+
+#' Expected number of batches for n analytes at a given batch size
+expected_batches <- function(n_analytes, batch_size) {
+  ceiling(n_analytes / batch_size)
+}
+
+
+# ===== DATA SETUP =====
+
+cat("Test Suite: Parallelization and Checkpointing\n")
+cat("==============================================\n\n")
+
+pheno_raw <- readRDS("PracticeData/pheno_example.rds")
+omics_raw <- readRDS("PracticeData/synth_small_betas.rds")
+
+if (any(sapply(pheno_raw, function(x) inherits(x, "haven_labelled")))) {
+  for (col in names(pheno_raw)) {
+    if (inherits(pheno_raw[[col]], "haven_labelled")) {
+      raw_values <- as.vector(pheno_raw[[col]])
+      numeric_attempt <- tryCatch(as.numeric(raw_values), error = function(e) NA)
+      pheno_raw[[col]] <- if (!all(is.na(numeric_attempt))) numeric_attempt else as.character(raw_values)
+    }
+  }
+}
+
+pheno <- pheno_raw[!duplicated(pheno_raw$SAMPLE_ID), ]
+pheno <- pheno[complete.cases(pheno[, c("SAMPLE_ID", "FU", "SUBJECT_ID", "FEMALE", "CONTROL_STATUS")]), ]
+
+analyte_names_raw <- rownames(omics_raw)
+omics_full <- as.data.frame(omics_raw)
+colnames(omics_full) <- colnames(omics_raw)
+omics_full <- cbind(ANALYTE_NAME = analyte_names_raw, omics_full, stringsAsFactors = FALSE)
+
+additional_covariates <- c("agebl", "agevis", "ethnic", "race3", "mbmi")
+
+pheno_single_fu <- pheno[pheno$FU %in% c(0, 1), ]
+pheno_single_fu <- pheno_single_fu[!duplicated(pheno_single_fu$SAMPLE_ID), ]
+pheno_multi_fu  <- pheno
+
+# Small omics subsets — fast enough for repeated runs in this test suite
+# 60 analytes: 6 batches at batch_size=10, enough to make resume tests meaningful
+omics_small <- omics_full[1:60, ]
+
+cat("Data loaded\n")
+cat("  Pheno (single FU): ", nrow(pheno_single_fu), "samples\n")
+cat("  Pheno (multi FU):  ", nrow(pheno_multi_fu), "samples\n")
+cat("  Omics (small):     ", nrow(omics_small), "analytes\n\n")
+
+
+# =============================================================================
+# PARALLELIZATION TESTS
+# =============================================================================
+
+cat("PARALLELIZATION TESTS\n")
+cat("=====================\n\n")
+
+# --- P1: Serial vs parallel — LM (single FU) ---------------------------------
+
+cat("P1: Serial vs parallel — LM\n")
+
+results_serial_lm   <- FAST_omics_WAS(pheno_single_fu, omics_small,
+                                       additional_covariates = additional_covariates,
+                                       n_cores = 1)
+results_parallel_lm <- FAST_omics_WAS(pheno_single_fu, omics_small,
+                                       additional_covariates = additional_covariates,
+                                       n_cores = 4)
+
+p1_pass <- run_checks(list(
+  "Results are numerically identical" = compare_results(results_serial_lm, results_parallel_lm)
+))
+cat("\n")
+
+# --- P2: Serial vs parallel — LME4 (multi FU) --------------------------------
+
+cat("P2: Serial vs parallel — LME4\n")
+
+results_serial_lme4   <- FAST_omics_WAS(pheno_multi_fu, omics_small,
+                                         additional_covariates = additional_covariates,
+                                         n_cores = 1)
+results_parallel_lme4 <- FAST_omics_WAS(pheno_multi_fu, omics_small,
+                                         additional_covariates = additional_covariates,
+                                         n_cores = 4)
+
+p2_pass <- run_checks(list(
+  "Results are numerically identical" = compare_results(results_serial_lme4, results_parallel_lme4)
+))
+cat("\n")
+
+# --- P3: n_cores=NULL auto-detects -------------------------------------------
+
+cat("P3: n_cores=NULL auto-detection\n")
+
+p3_error <- tryCatch({
+  FAST_omics_WAS(pheno_single_fu, omics_small,
+                 additional_covariates = additional_covariates,
+                 n_cores = NULL)
+  NULL
+}, error = function(e) e$message)
+
+p3_pass <- run_checks(list(
+  "Runs without error" = is.null(p3_error)
+))
+cat("\n")
+
+# --- P4: future::plan() is restored after call --------------------------------
+
+cat("P4: future::plan() restoration\n")
+
+future::plan(future::sequential)
+FAST_omics_WAS(pheno_single_fu, omics_small,
+               additional_covariates = additional_covariates,
+               n_cores = 4)
+p4_pass <- run_checks(list(
+  "Plan restored to sequential" = inherits(future::plan(), "sequential")
+))
+cat("\n")
+
+
+# =============================================================================
+# CHECKPOINTING TESTS
+# =============================================================================
+
+cat("CHECKPOINTING TESTS\n")
+cat("===================\n\n")
+
+BATCH_SIZE   <- 10L
+N_ANALYTES   <- nrow(omics_small)                         # 60
+N_BATCHES    <- expected_batches(N_ANALYTES, BATCH_SIZE)  # 6
+STRATA       <- c("all", "male", "female")
+RESPONSES    <- c("change", "level")
+
+# --- C1 & C2: Directory structure and batch file counts ----------------------
+
+cat("C1/C2: Directory structure and batch file counts\n")
+
+ckpt_dir_c1 <- file.path(tempdir(), "ckpt_c1")
+on.exit(unlink(ckpt_dir_c1, recursive = TRUE), add = TRUE)
+
+FAST_omics_WAS(pheno_single_fu, omics_small,
+               additional_covariates = additional_covariates,
+               n_cores = 4,
+               checkpoint_dir = ckpt_dir_c1,
+               checkpoint_batch_size = BATCH_SIZE)
+
+structure_checks <- list()
+for (resp in RESPONSES) {
+  for (stratum in STRATA) {
+    subdir    <- file.path(ckpt_dir_c1, resp, stratum)
+    n_files   <- length(list.files(subdir, pattern = "^batch_[0-9]+\\.rds$"))
+    check_key <- paste0(resp, "/", stratum, " has ", N_BATCHES, " batch files")
+    structure_checks[[check_key]] <- n_files == N_BATCHES
+  }
+}
+
+c1c2_pass <- run_checks(structure_checks)
+cat("\n")
+
+# --- C3: No .tmp files left after clean run ----------------------------------
+
+cat("C3: No .tmp files after clean run\n")
+
+c3_pass <- run_checks(list(
+  "No .tmp files remaining" = count_tmp_files(ckpt_dir_c1) == 0
+))
+cat("\n")
+
+# --- C4: Checkpointed results match non-checkpointed results -----------------
+
+cat("C4: Checkpointed results match non-checkpointed\n")
+
+# Reuse results_serial_lm (n_cores=1, no checkpoint) as the reference.
+# Run again with checkpointing (reusing ckpt_dir_c1 — all batches already exist,
+# so this also exercises the "all batches cached" fast path).
+results_from_cache <- FAST_omics_WAS(pheno_single_fu, omics_small,
+                                      additional_covariates = additional_covariates,
+                                      n_cores = 1,
+                                      checkpoint_dir = ckpt_dir_c1,
+                                      checkpoint_batch_size = BATCH_SIZE)
+
+c4_pass <- run_checks(list(
+  "Checkpointed results match reference" = compare_results(results_serial_lm, results_from_cache)
+))
+cat("\n")
+
+# --- C5 & C6: Resume test ----------------------------------------------------
+
+cat("C5/C6: Resume — partial crash simulation\n")
+
+ckpt_dir_c5 <- file.path(tempdir(), "ckpt_c5")
+on.exit(unlink(ckpt_dir_c5, recursive = TRUE), add = TRUE)
+
+# Full run to establish reference results and populate checkpoints
+results_before_crash <- FAST_omics_WAS(pheno_single_fu, omics_small,
+                                        additional_covariates = additional_covariates,
+                                        n_cores = 4,
+                                        checkpoint_dir = ckpt_dir_c5,
+                                        checkpoint_batch_size = BATCH_SIZE)
+
+# Simulate a crash: delete the last 2 batches from change/all
+crash_subdir   <- file.path(ckpt_dir_c5, "change", "all")
+all_batch_files <- sort(list.files(crash_subdir, pattern = "^batch_[0-9]+\\.rds$",
+                                    full.names = TRUE))
+files_to_delete <- tail(all_batch_files, 2)
+kept_files      <- setdiff(all_batch_files, files_to_delete)
+mtimes_before   <- file.mtime(kept_files)
+
+file.remove(files_to_delete)
+
+# Resume
+Sys.sleep(1)  # ensure mtime resolution is sufficient
+results_after_resume <- FAST_omics_WAS(pheno_single_fu, omics_small,
+                                        additional_covariates = additional_covariates,
+                                        n_cores = 4,
+                                        checkpoint_dir = ckpt_dir_c5,
+                                        checkpoint_batch_size = BATCH_SIZE)
+
+mtimes_after <- file.mtime(kept_files)
+
+c5c6_pass <- run_checks(list(
+  "Deleted batch files were recreated"       = all(file.exists(files_to_delete)),
+  "Resumed results match pre-crash results"  = compare_results(results_before_crash, results_after_resume),
+  "Untouched batches were not recomputed"    = all(mtimes_before == mtimes_after)
+))
+cat("\n")
+
+# --- C7: checkpoint_batch_size > n_analytes (single batch) -------------------
+
+cat("C7: checkpoint_batch_size larger than n_analytes\n")
+
+ckpt_dir_c7 <- file.path(tempdir(), "ckpt_c7")
+on.exit(unlink(ckpt_dir_c7, recursive = TRUE), add = TRUE)
+
+FAST_omics_WAS(pheno_single_fu, omics_small,
+               additional_covariates = additional_covariates,
+               n_cores = 4,
+               checkpoint_dir = ckpt_dir_c7,
+               checkpoint_batch_size = N_ANALYTES + 100L)
+
+c7_checks <- list()
+for (resp in RESPONSES) {
+  for (stratum in STRATA) {
+    subdir    <- file.path(ckpt_dir_c7, resp, stratum)
+    n_files   <- length(list.files(subdir, pattern = "^batch_[0-9]+\\.rds$"))
+    check_key <- paste0(resp, "/", stratum, " has exactly 1 batch file")
+    c7_checks[[check_key]] <- n_files == 1L
+  }
+}
+
+c7_pass <- run_checks(c7_checks)
+cat("\n")
+
+# --- C8: checkpoint_batch_size = 1 -------------------------------------------
+
+cat("C8: checkpoint_batch_size = 1\n")
+
+ckpt_dir_c8 <- file.path(tempdir(), "ckpt_c8")
+on.exit(unlink(ckpt_dir_c8, recursive = TRUE), add = TRUE)
+
+results_batch1 <- FAST_omics_WAS(pheno_single_fu, omics_small,
+                                  additional_covariates = additional_covariates,
+                                  n_cores = 4,
+                                  checkpoint_dir = ckpt_dir_c8,
+                                  checkpoint_batch_size = 1L)
+
+c8_checks <- list(
+  "Results match reference" = compare_results(results_serial_lm, results_batch1)
+)
+for (resp in RESPONSES) {
+  for (stratum in STRATA) {
+    subdir    <- file.path(ckpt_dir_c8, resp, stratum)
+    n_files   <- length(list.files(subdir, pattern = "^batch_[0-9]+\\.rds$"))
+    check_key <- paste0(resp, "/", stratum, " has ", N_ANALYTES, " batch files")
+    c8_checks[[check_key]] <- n_files == N_ANALYTES
+  }
+}
+
+c8_pass <- run_checks(c8_checks)
+cat("\n")
+
+
+# =============================================================================
+# SUMMARY
+# =============================================================================
+
+cat("Summary\n")
+cat("=======\n\n")
+
+cat("Parallelization:\n")
+cat("  P1 Serial vs parallel LM:    ", if (p1_pass) "PASS" else "FAIL", "\n")
+cat("  P2 Serial vs parallel LME4:  ", if (p2_pass) "PASS" else "FAIL", "\n")
+cat("  P3 n_cores=NULL auto-detect:  ", if (p3_pass) "PASS" else "FAIL", "\n")
+cat("  P4 Plan restoration:          ", if (p4_pass) "PASS" else "FAIL", "\n\n")
+
+cat("Checkpointing:\n")
+cat("  C1/C2 Directory structure:    ", if (c1c2_pass) "PASS" else "FAIL", "\n")
+cat("  C3 No .tmp files:             ", if (c3_pass) "PASS" else "FAIL", "\n")
+cat("  C4 Results match reference:   ", if (c4_pass) "PASS" else "FAIL", "\n")
+cat("  C5/C6 Resume:                 ", if (c5c6_pass) "PASS" else "FAIL", "\n")
+cat("  C7 Oversized batch size:      ", if (c7_pass) "PASS" else "FAIL", "\n")
+cat("  C8 batch_size=1:              ", if (c8_pass) "PASS" else "FAIL", "\n\n")
+
+all_pass <- p1_pass && p2_pass && p3_pass && p4_pass &&
+            c1c2_pass && c3_pass && c4_pass && c5c6_pass && c7_pass && c8_pass
+
+if (all_pass) cat("ALL TESTS PASSED\n") else cat("SOME TESTS FAILED\n")

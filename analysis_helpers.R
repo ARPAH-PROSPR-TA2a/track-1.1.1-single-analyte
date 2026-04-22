@@ -57,7 +57,8 @@
 }
 
 
-.perform_lm_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL, response_type = c("change", "level")) {
+.perform_lm_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL, response_type = c("change", "level"),
+                                 checkpoint_dir = NULL, checkpoint_batch_size = 2000L) {
 
     # Linear regression for single follow-up timepoint only
     # Extracts ALL fixed effect coefficients (treatment, covariates)
@@ -107,58 +108,82 @@
     }
     fu_level <- as.integer(as.character(fu_level))
 
-    # Fit model for each analyte in parallel
-    analyte_results <- furrr::future_map(seq_along(analyte_names), function(i) {
-      tryCatch({
-        analyte_name  <- analyte_names[i]
-        fu_values     <- as.numeric(omics_df[i, shared_samples])
-        baseline_vals <- omics_baseline_matrix[i, baseline_col_idx]
+    if (!is.null(checkpoint_dir)) {
+      dir.create(checkpoint_dir, recursive = TRUE, showWarnings = FALSE)
+    }
 
-        md <- model_data
-        if (response_type == "change") {
-          md$analyte <- fu_values - baseline_vals
-        } else {
-          md$analyte <- fu_values
-        }
-        md$analyte_baseline <- baseline_vals
+    batches     <- split(seq_along(analyte_names),
+                         ceiling(seq_along(analyte_names) / checkpoint_batch_size))
+    all_results <- vector("list", length(analyte_names))
 
-        coef_table <- summary(lm(as.formula(formula_str), data = md))$coefficients
+    for (b in seq_along(batches)) {
+      batch      <- batches[[b]]
+      batch_file <- if (!is.null(checkpoint_dir)) file.path(checkpoint_dir, paste0("batch_", b, ".rds")) else NULL
 
-        coefs <- data.frame(
-          ANALYTE_NAME = analyte_name,
-          COEFFICIENT  = rownames(coef_table),
-          EFFECT_SIZE  = coef_table[, "Estimate"],
-          SE           = coef_table[, "Std. Error"],
-          P_VALUE      = coef_table[, "Pr(>|t|)"],
-          stringsAsFactors = FALSE,
-          row.names = NULL
-        )
+      if (!is.null(batch_file) && file.exists(batch_file)) {
+        all_results[batch] <- readRDS(batch_file)
+        next
+      }
 
-        ctrl_idx <- grepl("^CONTROL_STATUS", rownames(coef_table))
-        te <- data.frame(
-          ANALYTE_NAME = analyte_name,
-          FU           = fu_level,
-          EFFECT_SIZE  = coef_table[ctrl_idx, "Estimate"],
-          SE           = coef_table[ctrl_idx, "Std. Error"],
-          P_VALUE      = coef_table[ctrl_idx, "Pr(>|t|)"],
-          stringsAsFactors = FALSE,
-          row.names = NULL
-        )
+      batch_results <- furrr::future_map(batch, function(i) {
+        tryCatch({
+          analyte_name  <- analyte_names[i]
+          fu_values     <- as.numeric(omics_df[i, shared_samples])
+          baseline_vals <- omics_baseline_matrix[i, baseline_col_idx]
 
-        list(coefficients = coefs, treatment_effects = te)
+          md <- model_data
+          if (response_type == "change") {
+            md$analyte <- fu_values - baseline_vals
+          } else {
+            md$analyte <- fu_values
+          }
+          md$analyte_baseline <- baseline_vals
 
-      }, error = function(e) {
-        warning("Error processing analyte '", analyte_names[i], "': ", e$message)
-        NULL
-      })
-    }, .options = furrr::furrr_options(seed = TRUE))
+          coef_table <- summary(lm(as.formula(formula_str), data = md))$coefficients
 
-    analyte_results <- Filter(Negate(is.null), analyte_results)
+          coefs <- data.frame(
+            ANALYTE_NAME = analyte_name,
+            COEFFICIENT  = rownames(coef_table),
+            EFFECT_SIZE  = coef_table[, "Estimate"],
+            SE           = coef_table[, "Std. Error"],
+            P_VALUE      = coef_table[, "Pr(>|t|)"],
+            stringsAsFactors = FALSE,
+            row.names = NULL
+          )
 
-    if (length(analyte_results) == 0) return(NULL)
+          ctrl_idx <- grepl("^CONTROL_STATUS", rownames(coef_table))
+          te <- data.frame(
+            ANALYTE_NAME = analyte_name,
+            FU           = fu_level,
+            EFFECT_SIZE  = coef_table[ctrl_idx, "Estimate"],
+            SE           = coef_table[ctrl_idx, "Std. Error"],
+            P_VALUE      = coef_table[ctrl_idx, "Pr(>|t|)"],
+            stringsAsFactors = FALSE,
+            row.names = NULL
+          )
 
-    coefficients      <- do.call(rbind, lapply(analyte_results, `[[`, "coefficients"))
-    treatment_effects <- do.call(rbind, lapply(analyte_results, `[[`, "treatment_effects"))
+          list(coefficients = coefs, treatment_effects = te)
+
+        }, error = function(e) {
+          warning("Error processing analyte '", analyte_names[i], "': ", e$message)
+          NULL
+        })
+      }, .options = furrr::furrr_options(seed = TRUE))
+
+      if (!is.null(batch_file)) {
+        saveRDS(batch_results, paste0(batch_file, ".tmp"))
+        file.rename(paste0(batch_file, ".tmp"), batch_file)
+      }
+
+      all_results[batch] <- batch_results
+    }
+
+    all_results <- Filter(Negate(is.null), all_results)
+
+    if (length(all_results) == 0) return(NULL)
+
+    coefficients      <- do.call(rbind, lapply(all_results, `[[`, "coefficients"))
+    treatment_effects <- do.call(rbind, lapply(all_results, `[[`, "treatment_effects"))
     row.names(coefficients)      <- NULL
     row.names(treatment_effects) <- NULL
 
@@ -169,7 +194,8 @@
 }
 
 
-.perform_lme4_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL, response_type = c("change", "level")) {
+.perform_lme4_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL, response_type = c("change", "level"),
+                                   checkpoint_dir = NULL, checkpoint_batch_size = 2000L) {
 
     require(lme4)
     require(lmerTest)
@@ -210,63 +236,87 @@
 
     analyte_names <- omics_df$ANALYTE_NAME
 
-    # Fit model for each analyte in parallel
-    analyte_results <- furrr::future_map(seq_along(analyte_names), function(i) {
-      tryCatch({
-        analyte_name  <- analyte_names[i]
-        fu_values     <- as.numeric(omics_df[i, shared_samples])
-        baseline_vals <- omics_baseline_matrix[i, baseline_col_idx]
+    if (!is.null(checkpoint_dir)) {
+      dir.create(checkpoint_dir, recursive = TRUE, showWarnings = FALSE)
+    }
 
-        md <- model_data
-        if (response_type == "change") {
-          md$analyte <- fu_values - baseline_vals
-        } else {
-          md$analyte <- fu_values
-        }
-        md$analyte_baseline <- baseline_vals
+    batches     <- split(seq_along(analyte_names),
+                         ceiling(seq_along(analyte_names) / checkpoint_batch_size))
+    all_results <- vector("list", length(analyte_names))
 
-        fit <- lmerTest::lmer(as.formula(formula_str), data = md, REML = FALSE,
-                              control = lme4::lmerControl(calc.derivs = FALSE))
+    for (b in seq_along(batches)) {
+      batch      <- batches[[b]]
+      batch_file <- if (!is.null(checkpoint_dir)) file.path(checkpoint_dir, paste0("batch_", b, ".rds")) else NULL
 
-        coef_table <- summary(fit)$coefficients
+      if (!is.null(batch_file) && file.exists(batch_file)) {
+        all_results[batch] <- readRDS(batch_file)
+        next
+      }
 
-        coefs <- data.frame(
-          ANALYTE_NAME = analyte_name,
-          COEFFICIENT  = rownames(coef_table),
-          EFFECT_SIZE  = coef_table[, "Estimate"],
-          SE           = coef_table[, "Std. Error"],
-          P_VALUE      = coef_table[, "Pr(>|t|)"],
-          stringsAsFactors = FALSE,
-          row.names = NULL
-        )
+      batch_results <- furrr::future_map(batch, function(i) {
+        tryCatch({
+          analyte_name  <- analyte_names[i]
+          fu_values     <- as.numeric(omics_df[i, shared_samples])
+          baseline_vals <- omics_baseline_matrix[i, baseline_col_idx]
 
-        emm      <- emmeans::emmeans(fit, ~ CONTROL_STATUS | FU)
-        contr_df <- as.data.frame(pairs(emm, reverse = TRUE))
+          md <- model_data
+          if (response_type == "change") {
+            md$analyte <- fu_values - baseline_vals
+          } else {
+            md$analyte <- fu_values
+          }
+          md$analyte_baseline <- baseline_vals
 
-        te <- data.frame(
-          ANALYTE_NAME = analyte_name,
-          FU           = as.integer(as.character(contr_df$FU)),
-          EFFECT_SIZE  = contr_df$estimate,
-          SE           = contr_df$SE,
-          P_VALUE      = contr_df$p.value,
-          stringsAsFactors = FALSE,
-          row.names = NULL
-        )
+          fit <- lmerTest::lmer(as.formula(formula_str), data = md, REML = FALSE,
+                                control = lme4::lmerControl(calc.derivs = FALSE))
 
-        list(coefficients = coefs, treatment_effects = te)
+          coef_table <- summary(fit)$coefficients
 
-      }, error = function(e) {
-        warning("Error processing analyte '", analyte_names[i], "': ", e$message)
-        NULL
-      })
-    }, .options = furrr::furrr_options(seed = TRUE, packages = c("lme4", "lmerTest", "emmeans")))
+          coefs <- data.frame(
+            ANALYTE_NAME = analyte_name,
+            COEFFICIENT  = rownames(coef_table),
+            EFFECT_SIZE  = coef_table[, "Estimate"],
+            SE           = coef_table[, "Std. Error"],
+            P_VALUE      = coef_table[, "Pr(>|t|)"],
+            stringsAsFactors = FALSE,
+            row.names = NULL
+          )
 
-    analyte_results <- Filter(Negate(is.null), analyte_results)
+          emm      <- emmeans::emmeans(fit, ~ CONTROL_STATUS | FU)
+          contr_df <- as.data.frame(pairs(emm, reverse = TRUE))
 
-    if (length(analyte_results) == 0) return(NULL)
+          te <- data.frame(
+            ANALYTE_NAME = analyte_name,
+            FU           = as.integer(as.character(contr_df$FU)),
+            EFFECT_SIZE  = contr_df$estimate,
+            SE           = contr_df$SE,
+            P_VALUE      = contr_df$p.value,
+            stringsAsFactors = FALSE,
+            row.names = NULL
+          )
 
-    coefficients      <- do.call(rbind, lapply(analyte_results, `[[`, "coefficients"))
-    treatment_effects <- do.call(rbind, lapply(analyte_results, `[[`, "treatment_effects"))
+          list(coefficients = coefs, treatment_effects = te)
+
+        }, error = function(e) {
+          warning("Error processing analyte '", analyte_names[i], "': ", e$message)
+          NULL
+        })
+      }, .options = furrr::furrr_options(seed = TRUE, packages = c("lme4", "lmerTest", "emmeans")))
+
+      if (!is.null(batch_file)) {
+        saveRDS(batch_results, paste0(batch_file, ".tmp"))
+        file.rename(paste0(batch_file, ".tmp"), batch_file)
+      }
+
+      all_results[batch] <- batch_results
+    }
+
+    all_results <- Filter(Negate(is.null), all_results)
+
+    if (length(all_results) == 0) return(NULL)
+
+    coefficients      <- do.call(rbind, lapply(all_results, `[[`, "coefficients"))
+    treatment_effects <- do.call(rbind, lapply(all_results, `[[`, "treatment_effects"))
     row.names(coefficients)      <- NULL
     row.names(treatment_effects) <- NULL
 
@@ -277,7 +327,8 @@
 }
 
 
-.perform_analysis <- function(pheno_df, omics_df, omics_type, mixed_effects, additional_covariates = NULL, response_type = c("change", "level")) {
+.perform_analysis <- function(pheno_df, omics_df, omics_type, mixed_effects, additional_covariates = NULL, response_type = c("change", "level"),
+                              checkpoint_dir = NULL, checkpoint_batch_size = 2000L) {
 
   pheno_baseline <- pheno_df[pheno_df$FU == 0, ]
   baseline_sample_ids <- pheno_baseline$SAMPLE_ID
@@ -288,9 +339,9 @@
 
   max_fu <- max(as.numeric(as.character(pheno_analysis$FU)), na.rm = TRUE)
   if (max_fu == 1) {
-    results <- .perform_lm_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates, response_type)
+    results <- .perform_lm_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates, response_type, checkpoint_dir, checkpoint_batch_size)
   } else {
-    results <- .perform_lme4_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates, response_type)
+    results <- .perform_lme4_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates, response_type, checkpoint_dir, checkpoint_batch_size)
   }
 
   if (!is.null(results)) {
@@ -359,7 +410,8 @@
 
 .run_stratified_analysis <- function(pheno_list, omics_list, omics_type,
                                      additional_covariates, response_type = c("change", "level"),
-                                     filtered_probes = NULL) {
+                                     filtered_probes = NULL,
+                                     checkpoint_dir = NULL, checkpoint_batch_size = 2000L) {
 
   response_type <- match.arg(response_type)
 
@@ -369,13 +421,19 @@
 
     if (is.null(pheno_list[[dataset]])) next
 
+    stratum_checkpoint_dir <- if (!is.null(checkpoint_dir)) {
+      file.path(checkpoint_dir, response_type, dataset)
+    } else NULL
+
     analysis_results <- .perform_analysis(
       pheno_list[[dataset]],
       omics_list[[dataset]],
       omics_type,
       pheno_list$requires_mixed_effects,
       additional_covariates,
-      response_type
+      response_type,
+      stratum_checkpoint_dir,
+      checkpoint_batch_size
     )
 
     outputs[[dataset]] <- list(

@@ -6,7 +6,9 @@ FAST_omics_WAS <- function(pheno,
                            omics,
                            omics_type = "Proteomics",
                            additional_covariates = NULL,
-                           n_cores = NULL) {
+                           n_cores = NULL,
+                           checkpoint_dir = NULL,
+                           checkpoint_batch_size = 2000L) {
 
   # Auto-detect cores if not specified, leaving one free for the OS.
   # Note: detectCores() may overcount in HPC/container environments — set
@@ -15,7 +17,7 @@ FAST_omics_WAS <- function(pheno,
     n_cores <- max(1L, parallel::detectCores() - 1L)
   }
 
-  old_plan <- future::plan()
+  old_plan <- future::plan("list")
   on.exit(future::plan(old_plan), add = TRUE)
   if (n_cores > 1L) {
     future::plan(future::multisession, workers = n_cores)
@@ -37,9 +39,11 @@ FAST_omics_WAS <- function(pheno,
   }
 
   analysis_change <- .run_stratified_analysis(pheno_list, omics_list, omics_type,
-                                              additional_covariates, "change", filtered_probes)
+                                              additional_covariates, "change", filtered_probes,
+                                              checkpoint_dir, checkpoint_batch_size)
   analysis_level  <- .run_stratified_analysis(pheno_list, omics_list, omics_type,
-                                              additional_covariates, "level", filtered_probes)
+                                              additional_covariates, "level", filtered_probes,
+                                              checkpoint_dir, checkpoint_batch_size)
 
   return(list(
     analysis_change = analysis_change,
