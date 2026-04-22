@@ -11,10 +11,11 @@
 #                    |  LM               |  LME4
 #
 # Each test runs both change and level models (change = analyte change from baseline,
-# level = absolute analyte level at follow-up). Results are nested as:
+# level = absolute analyte level at follow-up). Analysis results are nested as:
 #   list(analysis_change = list(all, male, female),
-#        analysis_level  = list(all, male, female),
-#        reports         = list(all, male, female))
+#        analysis_level  = list(all, male, female))
+# Reports are generated separately via FAST_omics_WAS_reports, returning:
+#   list(all, male, female)
 #
 # DNAm results have the same structure as non-DNAm, with an additional
 # BH_P_VALUE_FILTERED column that contains BH-corrected p-values for
@@ -171,23 +172,23 @@ check_dnam_structure <- function(analysis, expected_fu_levels, filtered_probes) 
   )
 }
 
-#' Check top-level structure: has analysis_change, analysis_level, and reports
-#' @param results Full results object
+#' Check top-level structure: has analysis_change and analysis_level
+#' @param results Full results object from FAST_omics_WAS
 #' @return Named list of check results
 check_top_level_structure <- function(results) {
   list(
-    "Has analysis_change, analysis_level, and reports" = all(c("analysis_change", "analysis_level", "reports") %in% names(results)),
+    "Has analysis_change and analysis_level" = all(c("analysis_change", "analysis_level") %in% names(results)),
+    "Does not contain reports" = !"reports" %in% names(results),
     "analysis_change has all/male/female" = all(c("all", "male", "female") %in% names(results$analysis_change)),
-    "analysis_level has all/male/female" = all(c("all", "male", "female") %in% names(results$analysis_level)),
-    "reports has all/male/female" = all(c("all", "male", "female") %in% names(results$reports))
+    "analysis_level has all/male/female" = all(c("all", "male", "female") %in% names(results$analysis_level))
   )
 }
 
 #' Check reports structure: pheno, omics, covariates, randomization summaries
-#' @param results Full results object
+#' @param reports Reports object from FAST_omics_WAS_reports
 #' @return Named list of check results
-check_reports_structure <- function(results) {
-  report <- results$reports$all
+check_reports_structure <- function(reports) {
+  report <- reports$all
   list(
     "Reports all stratum exists" = !is.null(report),
     "Has pheno_summary" = !is.null(report$pheno_summary),
@@ -196,7 +197,7 @@ check_reports_structure <- function(results) {
     "Pheno summary has rows" = nrow(report$pheno_summary) > 0,
     "Omics summary has rows" = nrow(report$omics_summary) > 0,
     "Randomization summary has rows" = nrow(report$randomization_summary) > 0,
-    "Reports sex stratification works" = !is.null(results$reports$male) && !is.null(results$reports$female)
+    "Reports sex stratification works" = !is.null(reports$male) && !is.null(reports$female)
   )
 }
 
@@ -292,6 +293,12 @@ results_test1 <- FAST_omics_WAS(
   omics_type = "Proteomics",
   additional_covariates = additional_covariates
 )
+reports_test1 <- FAST_omics_WAS_reports(
+  pheno = pheno_single_fu,
+  omics = omics,
+  omics_type = "Proteomics",
+  additional_covariates = additional_covariates
+)
 
 cat("Top-Level Structure Checks\n")
 test1_top_pass <- run_checks(check_top_level_structure(results_test1))
@@ -310,7 +317,7 @@ test1_level_struct_pass <- run_checks(check_non_dnam_structure(results_test1$ana
 cat("\n")
 
 cat("Reports Structural Checks\n")
-test1_reports_pass <- run_checks(check_reports_structure(results_test1))
+test1_reports_pass <- run_checks(check_reports_structure(reports_test1))
 cat("\n")
 
 cat("Change Treatment Effect Validation\n")
@@ -339,6 +346,12 @@ results_test2 <- FAST_omics_WAS(
   omics_type = "Proteomics",
   additional_covariates = additional_covariates
 )
+reports_test2 <- FAST_omics_WAS_reports(
+  pheno = pheno_multi_fu,
+  omics = omics,
+  omics_type = "Proteomics",
+  additional_covariates = additional_covariates
+)
 
 cat("Top-Level Structure Checks\n")
 test2_top_pass <- run_checks(check_top_level_structure(results_test2))
@@ -357,7 +370,7 @@ test2_level_struct_pass <- run_checks(check_non_dnam_structure(results_test2$ana
 cat("\n")
 
 cat("Reports Structural Checks\n")
-test2_reports_pass <- run_checks(check_reports_structure(results_test2))
+test2_reports_pass <- run_checks(check_reports_structure(reports_test2))
 cat("\n")
 
 cat("Change Treatment Effect Validation\n")
@@ -381,6 +394,12 @@ cat("Method: Linear regression (LM) with BH_P_VALUE_FILTERED for filtered probes
 
 cat("Running analysis (expects warnings about missing probes)...\n")
 results_test3 <- FAST_omics_WAS(
+  pheno = pheno_single_fu,
+  omics = omics,
+  omics_type = "DNAm",
+  additional_covariates = additional_covariates
+)
+reports_test3 <- FAST_omics_WAS_reports(
   pheno = pheno_single_fu,
   omics = omics,
   omics_type = "DNAm",
@@ -416,7 +435,7 @@ test3_level_struct_pass <- run_checks(check_dnam_structure(results_test3$analysi
 cat("\n")
 
 cat("Reports Structural Checks\n")
-test3_reports_pass <- run_checks(check_reports_structure(results_test3))
+test3_reports_pass <- run_checks(check_reports_structure(reports_test3))
 cat("\n")
 
 cat("Change Treatment Effect Validation\n")
@@ -440,6 +459,12 @@ cat("Method: Linear mixed effects (LME4) with BH_P_VALUE_FILTERED for filtered p
 
 cat("Running analysis (expects warnings about missing probes)...\n")
 results_test4 <- FAST_omics_WAS(
+  pheno = pheno_multi_fu,
+  omics = omics,
+  omics_type = "DNAm",
+  additional_covariates = additional_covariates
+)
+reports_test4 <- FAST_omics_WAS_reports(
   pheno = pheno_multi_fu,
   omics = omics,
   omics_type = "DNAm",
@@ -475,7 +500,7 @@ test4_level_struct_pass <- run_checks(check_dnam_structure(results_test4$analysi
 cat("\n")
 
 cat("Reports Structural Checks\n")
-test4_reports_pass <- run_checks(check_reports_structure(results_test4))
+test4_reports_pass <- run_checks(check_reports_structure(reports_test4))
 cat("\n")
 
 cat("Change Treatment Effect Validation\n")
