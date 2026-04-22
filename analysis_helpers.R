@@ -283,7 +283,8 @@
         model_data$analyte_baseline <- baseline_vals
 
          # Fit lmer model
-         fit <- lmerTest::lmer(as.formula(formula_str), data = model_data, REML = FALSE)
+         fit <- lmerTest::lmer(as.formula(formula_str), data = model_data, REML = FALSE,
+                               control = lmerControl(calc.derivs = FALSE))
 
         # Extract coefficients with Satterthwaite p-values
         fit_summary <- summary(fit)
