@@ -125,11 +125,20 @@
         next
       }
 
-      batch_results <- furrr::future_map(batch, function(i) {
+      # Pre-extract per-analyte data so omics_df and omics_baseline_matrix are
+      # not captured in the future_map closure. Without this, future exports the
+      # full matrices (~GB for DNAm) to every worker rather than one row each.
+      batch_items <- lapply(batch, function(i) list(
+        analyte_name  = analyte_names[i],
+        fu_values     = as.numeric(omics_df[i, shared_samples]),
+        baseline_vals = omics_baseline_matrix[i, baseline_col_idx]
+      ))
+
+      batch_results <- furrr::future_map(batch_items, function(item) {
         tryCatch({
-          analyte_name  <- analyte_names[i]
-          fu_values     <- as.numeric(omics_df[i, shared_samples])
-          baseline_vals <- omics_baseline_matrix[i, baseline_col_idx]
+          analyte_name  <- item$analyte_name
+          fu_values     <- item$fu_values
+          baseline_vals <- item$baseline_vals
 
           md <- model_data
           if (response_type == "change") {
@@ -168,7 +177,7 @@
           list(coefficients = coefs, treatment_effects = te)
 
         }, error = function(e) {
-          warning("Error processing analyte '", analyte_names[i], "': ", e$message)
+          warning("Error processing analyte '", item$analyte_name, "': ", e$message)
           NULL
         })
       }, .options = furrr::furrr_options(seed = TRUE))
@@ -256,11 +265,20 @@
         next
       }
 
-      batch_results <- furrr::future_map(batch, function(i) {
+      # Pre-extract per-analyte data so omics_df and omics_baseline_matrix are
+      # not captured in the future_map closure. Without this, future exports the
+      # full matrices (~GB for DNAm) to every worker rather than one row each.
+      batch_items <- lapply(batch, function(i) list(
+        analyte_name  = analyte_names[i],
+        fu_values     = as.numeric(omics_df[i, shared_samples]),
+        baseline_vals = omics_baseline_matrix[i, baseline_col_idx]
+      ))
+
+      batch_results <- furrr::future_map(batch_items, function(item) {
         tryCatch({
-          analyte_name  <- analyte_names[i]
-          fu_values     <- as.numeric(omics_df[i, shared_samples])
-          baseline_vals <- omics_baseline_matrix[i, baseline_col_idx]
+          analyte_name  <- item$analyte_name
+          fu_values     <- item$fu_values
+          baseline_vals <- item$baseline_vals
 
           md <- model_data
           if (response_type == "change") {
@@ -302,7 +320,7 @@
           list(coefficients = coefs, treatment_effects = te)
 
         }, error = function(e) {
-          warning("Error processing analyte '", analyte_names[i], "': ", e$message)
+          warning("Error processing analyte '", item$analyte_name, "': ", e$message)
           NULL
         })
       }, .options = furrr::furrr_options(seed = TRUE, packages = c("lme4", "lmerTest", "emmeans")))

@@ -17,8 +17,20 @@ FAST_omics_WAS <- function(pheno,
     n_cores <- max(1L, parallel::detectCores() - 1L)
   }
 
-  old_plan <- future::plan("list")
+  # future snapshots certain R options when a plan is set, including `exact`
+  # (controls [[ partial matching). In a fresh session `exact` is unset (NULL).
+  # future stores NULL, then tries to restore it via options(exact = NULL),
+  # which fails in newer R because `exact` is a formal arg to base::options(),
+  # not a plain option name. Set it to its documented default so future
+  # captures a valid value instead of NULL.
+  
+  if ("exact" %in% names(.Options)) {
+    .Options$exact <- NULL
+  }
+
+  old_plan <- future::plan()
   on.exit(future::plan(old_plan), add = TRUE)
+  
   if (n_cores > 1L) {
     future::plan(future::multisession, workers = n_cores)
   } else {

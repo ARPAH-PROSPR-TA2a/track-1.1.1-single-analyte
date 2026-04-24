@@ -5,6 +5,8 @@
 #   P2: Serial (n_cores=1) vs parallel (n_cores=4) produce identical results - LME4
 #   P3: n_cores=NULL auto-detects and runs without error
 #   P4: future::plan() is restored to sequential after FAST_omics_WAS returns
+#   P5: Large omics (~5 000 probes) runs within a tight future.globals.maxSize
+#       (regression test: omics_df / omics_baseline_matrix must not be globals)
 #
 # Checkpointing tests:
 #   C1: Expected directory structure is created
@@ -187,6 +189,64 @@ FAST_omics_WAS(pheno_single_fu, omics_small,
 p4_pass <- run_checks(list(
   "Plan restored to sequential" = inherits(future::plan(), "sequential")
 ))
+cat("\n")
+
+# --- P5: Large omics does not exceed future globals limit --------------------
+#
+# Regression test for the "total size of globals exceeds maxSize" error that
+# occurs when omics_df / omics_baseline_matrix are captured in the future_map
+# closure. We synthetically reproduce the failure condition by:
+#   1. Building a wide omics object (~5 000 probes) whose two exported matrices
+#      (omics_df + omics_baseline_matrix) would together exceed a tight
+#      future.globals.maxSize if they were still globals.
+#   2. Setting maxSize to 60% of a single matrix's expected byte footprint —
+#      large enough for the small closed-over globals (model_data, formula_str,
+#      etc.) but far too small for either full matrix.
+#   3. Running with n_cores = 2 and asserting no error.
+#
+# If the matrices ever sneak back into the closure this test will fail with the
+# familiar "exceeds maximum allowed size" message.
+
+cat("P5: Large omics does not exceed future globals size limit\n")
+
+n_large_probes  <- 5000L
+n_samples_in_fu <- length(unique(pheno_single_fu$SAMPLE_ID))
+
+# Synthetic wide omics: n_large_probes rows, one column per sample + ANALYTE_NAME
+set.seed(999)
+omics_large_mat <- matrix(
+  runif(n_large_probes * n_samples_in_fu),
+  nrow = n_large_probes,
+  ncol = n_samples_in_fu,
+  dimnames = list(NULL, unique(pheno_single_fu$SAMPLE_ID))
+)
+omics_large <- cbind(
+  ANALYTE_NAME = paste0("probe_", seq_len(n_large_probes)),
+  as.data.frame(omics_large_mat),
+  stringsAsFactors = FALSE
+)
+
+# 60% of one matrix's byte footprint: old code would fail (two matrices ≈ 3×
+# this threshold), new code exports only tiny globals and will pass.
+single_matrix_bytes <- n_large_probes * n_samples_in_fu * 8
+test_maxSize        <- floor(single_matrix_bytes * 0.6)
+
+old_maxSize <- getOption("future.globals.maxSize")
+options(future.globals.maxSize = test_maxSize)
+on.exit(options(future.globals.maxSize = old_maxSize), add = TRUE)
+
+p5_error <- tryCatch({
+  FAST_omics_WAS(pheno_single_fu, omics_large,
+                 n_cores = 2)
+  NULL
+}, error = function(e) e$message)
+
+options(future.globals.maxSize = old_maxSize)
+
+p5_pass <- run_checks(list(
+  "Large omics runs within tight globals size limit" = is.null(p5_error)
+))
+if (!is.null(p5_error)) cat("       Error: ", p5_error, "\n")
 cat("\n")
 
 
