@@ -144,7 +144,8 @@ reports <- FAST_omics_WAS_reports(
 
 ### Return Value
 
-A list stratified by sex (`$all`, `$male`, `$female`). Each stratum contains:
+A list with sex-stratified summaries (`$all`, `$male`, `$female`) and a
+top-level `$randomization_reports`. Each stratum contains:
 
 -   **`$pheno_summary`**: Data frame with one row per (FU, FEMALE) cell
     giving N_SUBJECTS, N_CONTROL, N_TREATMENT (subject-level) and
@@ -153,8 +154,19 @@ A list stratified by sex (`$all`, `$male`, `$female`). Each stratum contains:
     (FU=0), as a pre-treatment reference distribution
 -   **`$covariates_summary`**: Summary of additional covariates at
     baseline (FU=0); NULL if no additional covariates provided
--   **`$randomization_summary`**: Baseline balance check per analyte
-    (Welch's t-test comparing treatment groups)
+
+Randomization reports are study-level (not sex-stratified) and are
+returned as `$randomization_reports`:
+
+-   **`$analyte_randomization_report`**: Per-analyte baseline balance
+    check (Welch's t-test, treatment vs control)
+-   **`$covariate_randomization_report`**: Baseline balance check for
+    `FEMALE` (if both sexes present) and any additional covariates.
+    Numeric variables use Welch's t-test; logical variables use
+    chi-squared; factor variables use chi-squared when all cell counts
+    are ≥ 5, otherwise Fisher's exact test (with simulation for tables
+    larger than 2×2). Reports VARIABLE, TYPE, TEST, STATISTIC,
+    MIN_CELL_COUNT, P_VALUE, and per-group SUMMARY columns.
 
 ---
 

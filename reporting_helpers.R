@@ -150,6 +150,123 @@
 }
 
 
+.create_pheno_randomization_report <- function(pheno_df, additional_covariates = NULL) {
+
+  # Restrict to baseline
+  pheno_baseline <- pheno_df[pheno_df$FU == 0, ]
+
+  control_status <- pheno_baseline$CONTROL_STATUS
+  ctrl_mask <- as.integer(as.character(control_status)) == 0
+  trt_mask  <- as.integer(as.character(control_status)) == 1
+
+  # FEMALE only if both sexes present; then additional covariates
+  variables <- character(0)
+  if (length(unique(pheno_baseline$FEMALE)) == 2) {
+    variables <- c(variables, "FEMALE")
+  }
+  if (!is.null(additional_covariates)) {
+    variables <- c(variables, additional_covariates)
+  }
+
+  if (length(variables) == 0) return(NULL)
+
+  results_list <- list(
+    VARIABLE          = character(),
+    TYPE              = character(),
+    TEST              = character(),
+    STATISTIC         = numeric(),
+    MIN_CELL_COUNT    = integer(),
+    P_VALUE           = numeric(),
+    SUMMARY_CONTROL   = list(),
+    SUMMARY_TREATMENT = list()
+  )
+
+  for (var in variables) {
+    col_data  <- pheno_baseline[[var]]
+    ctrl_data <- col_data[ctrl_mask]
+    trt_data  <- col_data[trt_mask]
+
+    if (is.numeric(col_data)) {
+      var_type  <- "numeric"
+      test_name <- "t-test"
+      tt <- tryCatch(
+        t.test(trt_data, ctrl_data, var.equal = FALSE),
+        error = function(e) NULL
+      )
+      statistic      <- if (!is.null(tt)) as.numeric(tt$statistic) else NA_real_
+      p_value        <- if (!is.null(tt)) tt$p.value else NA_real_
+      min_cell_count <- NA_integer_
+      summary_ctrl   <- list(mean = mean(ctrl_data, na.rm = TRUE), sd = sd(ctrl_data, na.rm = TRUE))
+      summary_trt    <- list(mean = mean(trt_data,  na.rm = TRUE), sd = sd(trt_data,  na.rm = TRUE))
+
+    } else if (is.logical(col_data) || is.factor(col_data)) {
+      var_type       <- if (is.logical(col_data)) "logical" else "factor"
+      tab            <- table(col_data, control_status)
+      min_cell_count <- as.integer(min(tab))
+
+      # For tables larger than 2x2, simulate p-value in Fisher's exact
+      if (min_cell_count < 5) {
+        ft <- tryCatch(
+          fisher.test(tab, simulate.p.value = nrow(tab) > 2),
+          error = function(e) NULL
+        )
+        test_name <- "fisher"
+        statistic <- NA_real_
+        p_value   <- if (!is.null(ft)) ft$p.value else NA_real_
+      } else {
+        ct <- tryCatch(chisq.test(tab), error = function(e) NULL)
+        test_name <- "chi-squared"
+        statistic <- if (!is.null(ct)) as.numeric(ct$statistic) else NA_real_
+        p_value   <- if (!is.null(ct)) ct$p.value else NA_real_
+      }
+
+      if (is.logical(col_data)) {
+        summary_ctrl <- list(n_true  = sum(ctrl_data == TRUE,  na.rm = TRUE),
+                             n_false = sum(ctrl_data == FALSE, na.rm = TRUE))
+        summary_trt  <- list(n_true  = sum(trt_data  == TRUE,  na.rm = TRUE),
+                             n_false = sum(trt_data  == FALSE, na.rm = TRUE))
+      } else {
+        ctrl_counts        <- as.numeric(tab[, "0"])
+        trt_counts         <- as.numeric(tab[, "1"])
+        names(ctrl_counts) <- rownames(tab)
+        names(trt_counts)  <- rownames(tab)
+        summary_ctrl <- list(counts = ctrl_counts)
+        summary_trt  <- list(counts = trt_counts)
+      }
+
+    } else {
+      next
+    }
+
+    results_list$VARIABLE          <- c(results_list$VARIABLE,       var)
+    results_list$TYPE              <- c(results_list$TYPE,            var_type)
+    results_list$TEST              <- c(results_list$TEST,            test_name)
+    results_list$STATISTIC         <- c(results_list$STATISTIC,       statistic)
+    results_list$MIN_CELL_COUNT    <- c(results_list$MIN_CELL_COUNT,  min_cell_count)
+    results_list$P_VALUE           <- c(results_list$P_VALUE,         p_value)
+    n <- length(results_list$SUMMARY_CONTROL)
+    results_list$SUMMARY_CONTROL[[n + 1]]   <- summary_ctrl
+    results_list$SUMMARY_TREATMENT[[n + 1]] <- summary_trt
+  }
+
+  if (length(results_list$VARIABLE) == 0) return(NULL)
+
+  report <- data.frame(
+    VARIABLE       = results_list$VARIABLE,
+    TYPE           = results_list$TYPE,
+    TEST           = results_list$TEST,
+    STATISTIC      = results_list$STATISTIC,
+    MIN_CELL_COUNT = results_list$MIN_CELL_COUNT,
+    P_VALUE        = results_list$P_VALUE,
+    stringsAsFactors = FALSE
+  )
+  report$SUMMARY_CONTROL   <- results_list$SUMMARY_CONTROL
+  report$SUMMARY_TREATMENT <- results_list$SUMMARY_TREATMENT
+
+  return(report)
+}
+
+
 .create_randomization_report <- function(pheno_df, omics_df) {
 
   # Filter to baseline (FU=0)
@@ -254,15 +371,19 @@
       covariates_report <- NULL
     }
 
-    randomization_report <- .create_randomization_report(pheno_list[[dataset]], omics_list[[dataset]])
-
     reports[[dataset]] <- list(
-      pheno_summary         = pheno_report,
-      omics_summary         = omics_report,
-      covariates_summary    = covariates_report,
-      randomization_summary = randomization_report
+      pheno_summary      = pheno_report,
+      omics_summary      = omics_report,
+      covariates_summary = covariates_report
     )
   }
+
+  # Randomization reports are study-level (not sex-stratified): computed once
+  # on the full dataset and returned as a top-level list.
+  reports$randomization_reports <- list(
+    analyte_randomization_report   = .create_randomization_report(pheno_list$all, omics_list$all),
+    covariate_randomization_report = .create_pheno_randomization_report(pheno_list$all, additional_covariates)
+  )
 
   return(reports)
 }
