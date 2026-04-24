@@ -539,7 +539,7 @@ levels)</td>
 (follow-up)</td>
 </tr>
 <tr>
-<td align="left">CONTROL_STATUS</td>
+<td align="left">TREATMENT_GROUP</td>
 <td align="center">factor (or numeric coerced to factor)</td>
 <td align="left">Must be binary 0/1 and include both groups</td>
 </tr>
@@ -551,7 +551,8 @@ levels)</td>
 <tr>
 <td align="left"><em>Additional covariates</em></td>
 <td align="center">numeric/factor/logical</td>
-<td align="left">Provided via <code>additional_covariates</code></td>
+<td align="left">Provided via <code>additional_covariates</code>;
+samples with NA values are dropped during validation</td>
 </tr>
 </tbody>
 </table>
@@ -603,10 +604,13 @@ DNAm M-values)</li>
 <ul>
 <li>Checks required columns and value constraints (FU must be 0,1,2,…
 with no gaps)</li>
-<li>Coerces <code>FU</code>, <code>CONTROL_STATUS</code>,
+<li>Coerces <code>FU</code>, <code>TREATMENT_GROUP</code>,
 <code>FEMALE</code> to factors if needed</li>
 <li>Deduplicates duplicate <code>SUBJECT_ID</code> x <code>FU</code>
 pairs (keeps first row)</li>
+<li>Drops samples with NA values in any additional covariate</li>
+<li>Drops subjects without both a baseline (FU == 0) and at least one
+follow-up (FU &gt; 0)</li>
 <li>Builds
 <code>pheno_list = list(all, male, female, requires_mixed_effects)</code></li>
 </ul></li>
@@ -734,12 +738,12 @@ burden regardless of batch boundaries.</p>
 <div id="model" class="section level3">
 <h3>Model</h3>
 <p>For each analyte:</p>
-<pre><code>response ~ CONTROL_STATUS + FEMALE + analyte_baseline + additional_covariates</code></pre>
+<pre><code>response ~ TREATMENT_GROUP + FEMALE + analyte_baseline + additional_covariates</code></pre>
 <p>Notes:</p>
 <ul>
 <li><code>FEMALE</code> is dropped if a stratum contains only one
 sex.</li>
-<li>Treatment effect is taken from the <code>CONTROL_STATUS</code>
+<li>Treatment effect is taken from the <code>TREATMENT_GROUP</code>
 coefficient.</li>
 <li>LM is intended for a single FU level. If multiple FU levels are
 present, it warns and uses the maximum FU level for labeling
@@ -751,7 +755,7 @@ outputs.</li>
 <ul>
 <li><code>coefficients</code>: all coefficients from
 <code>summary(lm_fit)$coefficients</code></li>
-<li><code>treatment_effects</code>: the <code>CONTROL_STATUS</code>
+<li><code>treatment_effects</code>: the <code>TREATMENT_GROUP</code>
 coefficient, labeled with <code>FU</code></li>
 </ul>
 <hr />
@@ -766,13 +770,13 @@ coefficient, labeled with <code>FU</code></li>
 <div id="model-1" class="section level3">
 <h3>Model</h3>
 <p>For each analyte:</p>
-<pre><code>response ~ CONTROL_STATUS * FU + FEMALE + analyte_baseline + additional_covariates + (1|SUBJECT_ID)</code></pre>
+<pre><code>response ~ TREATMENT_GROUP * FU + FEMALE + analyte_baseline + additional_covariates + (1|SUBJECT_ID)</code></pre>
 <p>Implementation details:</p>
 <ul>
 <li>Uses <code>lmerTest::lmer(..., REML = FALSE)</code> to obtain
 Satterthwaite p-values in
 <code>summary(fit)$coefficients[, &quot;Pr(&gt;|t|)&quot;]</code>.</li>
-<li>Uses <code>emmeans(fit, ~ CONTROL_STATUS | FU)</code> plus
+<li>Uses <code>emmeans(fit, ~ TREATMENT_GROUP | FU)</code> plus
 <code>pairs(..., reverse = TRUE)</code> to compute
 treatment-minus-control contrasts at each FU.</li>
 </ul>
@@ -826,19 +830,54 @@ burdens without re-running the model fits.</p>
 <p><strong>File</strong>: <code>reporting_helpers.R</code>
 (<code>.generate_reports()</code>)</p>
 <p>Reports are generated once (independent of response type) and
-stratified the same way as the analysis (<code>all</code>,
-<code>male</code>, <code>female</code>). Each stratum contains:</p>
+returned as a three-element list:</p>
+<div id="pheno_summary-study-level" class="section level3">
+<h3><code>$pheno_summary</code> (study-level)</h3>
+<p>One row per (FU, FEMALE) cell with subject/sample counts across the
+full dataset. Produced by <code>.create_pheno_data_report()</code>.</p>
+</div>
+<div id="variable_summaries" class="section level3">
+<h3><code>$variable_summaries</code></h3>
+<p>Sex-stratified (<code>all</code>, <code>male</code>,
+<code>female</code>). Within each stratum,
+<code>.generate_reports()</code> iterates over all FU × TREATMENT_GROUP
+(Tx) cells present in the data. For each non-empty cell it produces:</p>
 <ul>
-<li><code>pheno_summary</code>: counts per (<code>FU</code>,
-<code>FEMALE</code>) cell (subjects + samples)</li>
-<li><code>omics_summary</code>: per-analyte baseline distribution
-summary (FU == 0)</li>
-<li><code>covariates_summary</code>: baseline covariate summaries (if
-requested); NULL otherwise</li>
-<li><code>randomization_summary</code>: baseline balance check per
-analyte (Welch t-test)</li>
+<li><code>omics_FU{n}_Tx{m}</code>: per-analyte summary (N_NONMISSING,
+MEAN, MEDIAN, SD, MIN, MAX) for the samples in that cell — produced by
+<code>.create_omics_data_report(sample_ids, omics_df)</code></li>
+<li><code>covariates_FU{n}_Tx{m}</code>: covariate summary for those
+samples (COVARIATE_NAME, TYPE, N_NA, SUMMARY list-column) — produced by
+<code>.create_addx_covariate_report()</code>; omitted if no additional
+covariates</li>
+</ul>
+<p>Cells with no samples are skipped entirely. Keys are generated
+dynamically from the actual FU levels in the data, so the structure
+adapts to single or multiple follow-ups.</p>
+</div>
+<div id="randomization_reports-study-level-not-sex-stratified" class="section level3">
+<h3><code>$randomization_reports</code> (study-level, not
+sex-stratified)</h3>
+<ul>
+<li><code>omics_report</code>: per-analyte baseline balance check —
+<code>.create_randomization_report()</code> (Welch’s t-test,
+MEAN_DIFFERENCE, COHENS_D, SE, P_VALUE, BH_P_VALUE)</li>
+<li><code>covariate_report</code>: baseline balance for
+<code>FEMALE</code> (if both sexes present) and additional covariates —
+<code>.create_pheno_randomization_report()</code>. Test selection:
+<ul>
+<li><strong>numeric</strong>: Welch’s t-test</li>
+<li><strong>logical</strong>: chi-squared</li>
+<li><strong>factor</strong>: chi-squared if min cell count ≥ 5, Fisher’s
+exact otherwise (simulation enabled for tables larger than 2×2)</li>
+</ul>
+Columns: <code>VARIABLE</code>, <code>TYPE</code>, <code>TEST</code>,
+<code>STATISTIC</code>, <code>MIN_CELL_COUNT</code>,
+<code>P_VALUE</code>, <code>SUMMARY_CONTROL</code>,
+<code>SUMMARY_TREATMENT</code></li>
 </ul>
 <hr />
+</div>
 </div>
 <div id="results-output" class="section level2">
 <h2>Results Output</h2>
@@ -860,8 +899,8 @@ results$analysis_level$female</code></pre>
 <p>Key columns:</p>
 <ul>
 <li><code>coefficients</code>: <code>ANALYTE_NAME</code>,
-<code>COEFFICIENT</code>, <code>EFFECT_SIZE</code>, <code>SE</code>,
-<code>P_VALUE</code>, <code>BH_P_VALUE</code> (+
+<code>COEFFICIENT</code>, <code>N_OBS</code>, <code>EFFECT_SIZE</code>,
+<code>SE</code>, <code>P_VALUE</code>, <code>BH_P_VALUE</code> (+
 <code>BH_P_VALUE_FILTERED</code> for DNAm)</li>
 <li><code>treatment_effects</code>: <code>ANALYTE_NAME</code>,
 <code>FU</code>, <code>EFFECT_SIZE</code>, <code>SE</code>,
@@ -871,15 +910,22 @@ results$analysis_level$female</code></pre>
 </div>
 <div id="fast_omics_was_reports-return-value" class="section level3">
 <h3><code>FAST_omics_WAS_reports()</code> return value</h3>
-<pre class="r"><code>reports$all
-reports$male
-reports$female</code></pre>
-<p>Within each stratum (example: <code>reports$all</code>):</p>
+<pre class="r"><code>reports$pheno_summary          # study-level: data.frame, one row per (FU, FEMALE) cell
+reports$variable_summaries     # sex-stratified omics + covariate summaries
+reports$randomization_reports  # study-level balance checks</code></pre>
+<p><code>reports$variable_summaries</code> (example with FU=0,1 and both
+treatment groups):</p>
+<pre class="r"><code>reports$variable_summaries$all$omics_FU0_Tx0       # data.frame, per-analyte stats
+reports$variable_summaries$all$omics_FU0_Tx1
+reports$variable_summaries$all$omics_FU1_Tx0
+reports$variable_summaries$all$omics_FU1_Tx1
+reports$variable_summaries$all$covariates_FU0_Tx0  # data.frame or NULL
+# ... etc.; male/female follow the same structure</code></pre>
+<p><code>reports$randomization_reports</code> (study-level, not
+sex-stratified):</p>
 <pre class="r"><code>list(
-  pheno_summary         = data.frame(...),      # Subject/sample counts per (FU, FEMALE)
-  omics_summary         = data.frame(...),      # Baseline omics distribution summary
-  covariates_summary    = data.frame(...)|NULL, # Baseline covariate summaries
-  randomization_summary = data.frame(...)       # Baseline balance checks per analyte
+  omics_report     = data.frame(...),      # Per-analyte balance checks (t-test)
+  covariate_report = data.frame(...)|NULL  # FEMALE + covariate balance checks
 )</code></pre>
 </div>
 </div>

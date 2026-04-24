@@ -396,7 +396,7 @@ follow-up (<code>1</code>, <code>2</code>, …); values must be
 consecutive integers with no gaps</td>
 </tr>
 <tr>
-<td align="left"><code>CONTROL_STATUS</code></td>
+<td align="left"><code>TREATMENT_GROUP</code></td>
 <td align="center">factor (or numeric, auto-coerced)</td>
 <td align="left">Binary: <code>0</code> = control, <code>1</code> =
 treatment; both groups must be present</td>
@@ -417,7 +417,7 @@ size</td>
 </tbody>
 </table>
 <p><strong>Example:</strong></p>
-<pre><code>SAMPLE_ID    SUBJECT_ID   FU   CONTROL_STATUS   FEMALE   age   bmi
+<pre><code>SAMPLE_ID    SUBJECT_ID   FU   TREATMENT_GROUP   FEMALE   age   bmi
 s001         subj_01      0    1                1        55    27.1
 s002         subj_01      1    1                1        55    27.1
 s003         subj_02      0    0                0        62    24.8
@@ -566,7 +566,7 @@ $female  # Female subjects only (NULL if dataset is single-sex)</code></pre>
 <code>FU_value − baseline_value</code>; the <code>level</code> response
 is <code>FU_value</code>. Both include <code>analyte_baseline</code> as
 a covariate, so both are baseline-adjusted. Interpretation of
-<code>CONTROL_STATUS</code> effects differs: <code>change</code> gives
+<code>TREATMENT_GROUP</code> effects differs: <code>change</code> gives
 the treatment effect on the <em>change from baseline</em>, while
 <code>level</code> gives the treatment effect on the <em>absolute
 post-treatment level</em>.</p>
@@ -576,20 +576,20 @@ post-treatment level</em>.</p>
 <h3><code>$coefficients</code></h3>
 <p>All fixed-effect coefficients from the fitted model, for every
 analyte. For a single follow-up (LM), the model is:</p>
-<pre><code>response ~ CONTROL_STATUS + FEMALE + analyte_baseline + [additional covariates]</code></pre>
+<pre><code>response ~ TREATMENT_GROUP + FEMALE + analyte_baseline + [additional covariates]</code></pre>
 <p>For multiple follow-ups (LME4):</p>
-<pre><code>response ~ CONTROL_STATUS * FU + FEMALE + analyte_baseline + [additional covariates] + (1 | SUBJECT_ID)</code></pre>
+<pre><code>response ~ TREATMENT_GROUP * FU + FEMALE + analyte_baseline + [additional covariates] + (1 | SUBJECT_ID)</code></pre>
 <p>One row per analyte × coefficient combination.</p>
 <p><strong>Example (single follow-up, Proteomics):</strong></p>
 <pre><code>ANALYTE_NAME   COEFFICIENT          EFFECT_SIZE    SE       P_VALUE   BH_P_VALUE
 protein_A      (Intercept)          0.231          0.089    0.010     0.051
-protein_A      CONTROL_STATUS1      0.312          0.067    0.000     0.002
+protein_A      TREATMENT_GROUP1      0.312          0.067    0.000     0.002
 protein_A      FEMALE1             -0.118          0.064    0.067     0.201
 protein_A      analyte_baseline     0.794          0.041    0.000     0.000
 protein_A      age                  0.004          0.003    0.189     0.389
 protein_A      bmi                  0.007          0.005    0.211     0.389
 protein_B      (Intercept)         -0.041          0.072    0.569     0.712
-protein_B      CONTROL_STATUS1     -0.028          0.061    0.647     0.712
+protein_B      TREATMENT_GROUP1     -0.028          0.061    0.647     0.712
 protein_B      FEMALE1              0.053          0.058    0.362     0.589
 protein_B      analyte_baseline     0.831          0.038    0.000     0.000
 protein_B      age                 -0.002          0.003    0.501     0.712
@@ -614,7 +614,7 @@ protein_B      bmi                  0.003          0.004    0.488     0.712</cod
 <tr>
 <td align="left"><code>COEFFICIENT</code></td>
 <td align="left">Name of the model term, e.g. <code>(Intercept)</code>,
-<code>CONTROL_STATUS1</code>, <code>analyte_baseline</code>.</td>
+<code>TREATMENT_GROUP1</code>, <code>analyte_baseline</code>.</td>
 </tr>
 <tr>
 <td align="left"><code>EFFECT_SIZE</code></td>
@@ -635,7 +635,7 @@ of freedom for LME4</td>
 <td align="left"><code>BH_P_VALUE</code></td>
 <td align="left">Benjamini-Hochberg corrected p-value, applied
 separately within each <code>COEFFICIENT</code> group across all
-analytes (e.g., all <code>CONTROL_STATUS1</code> p-values are corrected
+analytes (e.g., all <code>TREATMENT_GROUP1</code> p-values are corrected
 together)</td>
 </tr>
 <tr>
@@ -652,11 +652,11 @@ other probes. See <a href="#dnam-filtered-bh">DNAm Filtered BH</a></td>
 <h3><code>$treatment_effects</code></h3>
 <p>The treatment-vs-control contrast at each follow-up level, one row
 per analyte × FU. For LM (single FU), this is identical to the
-<code>CONTROL_STATUS1</code> row in <code>$coefficients</code>. For LME4
-(multiple FUs), these are estimated marginal means contrasts from
+<code>TREATMENT_GROUP1</code> row in <code>$coefficients</code>. For
+LME4 (multiple FUs), these are estimated marginal means contrasts from
 <code>emmeans</code>, which properly account for the covariance between
-the <code>CONTROL_STATUS</code> main effect and the
-<code>CONTROL_STATUS:FU</code> interaction.</p>
+the <code>TREATMENT_GROUP</code> main effect and the
+<code>TREATMENT_GROUP:FU</code> interaction.</p>
 <p><strong>Example (two follow-up timepoints, LME4):</strong></p>
 <pre><code>ANALYTE_NAME   FU   EFFECT_SIZE    SE       P_VALUE   BH_P_VALUE
 protein_A      1    0.289          0.071    0.000     0.002
@@ -765,12 +765,12 @@ counts. <code>N_SAMPLES</code> is the raw row count.</p>
 <tr>
 <td align="left"><code>N_CONTROL</code></td>
 <td align="left">Number of unique control subjects
-(<code>CONTROL_STATUS == 0</code>)</td>
+(<code>TREATMENT_GROUP == 0</code>)</td>
 </tr>
 <tr>
 <td align="left"><code>N_TREATMENT</code></td>
 <td align="left">Number of unique treatment subjects
-(<code>CONTROL_STATUS == 1</code>)</td>
+(<code>TREATMENT_GROUP == 1</code>)</td>
 </tr>
 <tr>
 <td align="left"><code>N_SAMPLES</code></td>
