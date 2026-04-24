@@ -218,8 +218,9 @@ columns**:
 
 **Data requirements:**
 
--   Must contain at least one baseline sample (`FU == 0`) and one
-    follow-up sample (`FU >= 1`)
+-   Every subject must have both a baseline sample (`FU == 0`) and at
+    least one follow-up sample (`FU >= 1`); subjects missing either are
+    dropped during validation
 -   Must contain both males (`FEMALE == 0`) and females (`FEMALE == 1`),
     otherwise gender stratification will be skipped
 -   Must contain both control (`CONTROL_STATUS == 0`) and treatment
@@ -228,6 +229,7 @@ columns**:
 -   All `SUBJECT_ID*FU` pairs must be unique
 -   `FU`, `FEMALE`, and `CONTROL_STATUS` must be factors (or numeric
     values that will be automatically converted to factors)
+-   `FEMALE` and `CONTROL_STATUS` must be non-missing for all samples
 
 **Example structure:**
 
@@ -244,8 +246,9 @@ sample_004     subj_002    1   0               0       62     64
 -   Any columns not listed above can be included as additional
     covariates
 -   Must be numeric, factor, or logical
--   NA values are allowed but will reduce analysis sample size with a
-    warning
+-   Samples with NA values in any additional covariate are dropped
+    during validation; subjects left without both a baseline and a
+    follow-up after this filtering are then dropped as well
 -   Specified using the `additional_covariates` parameter, a character
     vector that names the columns within `pheno` that should be included
     as additional covariates in the models
