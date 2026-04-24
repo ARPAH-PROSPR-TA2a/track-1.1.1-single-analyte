@@ -32,16 +32,12 @@
 }
 
 
-.create_omics_data_report <- function(pheno_df, omics_df) {
-
-  # Restrict to baseline (FU=0) samples so the report describes the
-  # pre-treatment reference distribution for each analyte.
-  baseline_sample_ids <- pheno_df$SAMPLE_ID[pheno_df$FU == 0]
+.create_omics_data_report <- function(sample_ids, omics_df) {
 
   analyte_names <- omics_df$ANALYTE_NAME
 
   omics_numeric <- omics_df[, setdiff(names(omics_df), "ANALYTE_NAME"), drop = FALSE]
-  omics_numeric <- omics_numeric[, colnames(omics_numeric) %in% baseline_sample_ids, drop = FALSE]
+  omics_numeric <- omics_numeric[, colnames(omics_numeric) %in% sample_ids, drop = FALSE]
   
   # Initialize results data.frame
   report <- data.frame(
@@ -77,10 +73,6 @@
    if (is.null(covariate_names) || length(covariate_names) == 0) {
      return(NULL)
    }
-
-   # Restrict to baseline (FU=0) samples so the report describes the
-   # pre-treatment reference distribution for each covariate.
-   pheno_df <- pheno_df[pheno_df$FU == 0, ]
 
    # Initialize results list to build then convert to data.frame
    results_list <- list(
@@ -357,33 +349,54 @@
 
 .generate_reports <- function(pheno_list, omics_list, additional_covariates = NULL) {
 
-  reports <- list(all = NULL, male = NULL, female = NULL)
+  # --- Variable summaries: per stratum, per FU x CONTROL_STATUS cell ---
+  variable_summaries <- list(all = NULL, male = NULL, female = NULL)
 
   for (dataset in c("all", "male", "female")) {
     if (is.null(pheno_list[[dataset]])) next
 
-    pheno_report <- .create_pheno_data_report(pheno_list[[dataset]])
-    omics_report <- .create_omics_data_report(pheno_list[[dataset]], omics_list[[dataset]])
+    pheno_df <- pheno_list[[dataset]]
+    omics_df <- omics_list[[dataset]]
 
-    if (!is.null(additional_covariates)) {
-      covariates_report <- .create_addx_covariate_report(pheno_list[[dataset]], additional_covariates)
-    } else {
-      covariates_report <- NULL
+    fu_levels <- as.character(sort(unique(as.integer(as.character(pheno_df$FU)))))
+    tx_levels <- c("0", "1")
+
+    cell_reports <- list()
+
+    for (fu in fu_levels) {
+      for (tx in tx_levels) {
+        cell_key   <- paste0("_FU", fu, "_Tx", tx)
+        cell_mask  <- as.character(pheno_df$FU) == fu &
+                      as.character(pheno_df$CONTROL_STATUS) == tx
+        cell_pheno <- pheno_df[cell_mask, ]
+
+        if (nrow(cell_pheno) == 0) next
+
+        cell_reports[[paste0("omics", cell_key)]] <-
+          .create_omics_data_report(cell_pheno$SAMPLE_ID, omics_df)
+
+        if (!is.null(additional_covariates)) {
+          cell_reports[[paste0("covariates", cell_key)]] <-
+            .create_addx_covariate_report(cell_pheno, additional_covariates)
+        }
+      }
     }
 
-    reports[[dataset]] <- list(
-      pheno_summary      = pheno_report,
-      omics_summary      = omics_report,
-      covariates_summary = covariates_report
-    )
+    variable_summaries[[dataset]] <- cell_reports
   }
 
-  # Randomization reports are study-level (not sex-stratified): computed once
-  # on the full dataset and returned as a top-level list.
-  reports$randomization_reports <- list(
-    analyte_randomization_report   = .create_randomization_report(pheno_list$all, omics_list$all),
-    covariate_randomization_report = .create_pheno_randomization_report(pheno_list$all, additional_covariates)
+  # --- Randomization reports: study-level, not sex-stratified ---
+  randomization_reports <- list(
+    omics_report     = .create_randomization_report(pheno_list$all, omics_list$all),
+    covariate_report = .create_pheno_randomization_report(pheno_list$all, additional_covariates)
   )
 
-  return(reports)
+  # --- Pheno summary: study-level ---
+  pheno_summary <- .create_pheno_data_report(pheno_list$all)
+
+  return(list(
+    pheno_summary         = pheno_summary,
+    variable_summaries    = variable_summaries,
+    randomization_reports = randomization_reports
+  ))
 }

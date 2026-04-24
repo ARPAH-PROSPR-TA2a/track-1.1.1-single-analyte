@@ -111,7 +111,7 @@ Each contains results stratified by sex. Male and female results are only genera
 Each stratum contains:
 
 -   **`$coefficients`**: Data frame of all model coefficients for each
-    analyte (ANALYTE_NAME, COEFFICIENT, EFFECT_SIZE, SE, P_VALUE, BH_P_VALUE)
+    analyte (ANALYTE_NAME, COEFFICIENT, N_OBS, EFFECT_SIZE, SE, P_VALUE, BH_P_VALUE)
 -   **`$treatment_effects`**: Data frame of treatment effects at each
     follow-up level (ANALYTE_NAME, FU, EFFECT_SIZE, SE, P_VALUE, BH_P_VALUE)
 
@@ -144,29 +144,27 @@ reports <- FAST_omics_WAS_reports(
 
 ### Return Value
 
-A list with sex-stratified summaries (`$all`, `$male`, `$female`) and a
-top-level `$randomization_reports`. Each stratum contains:
+A list with three top-level elements:
 
--   **`$pheno_summary`**: Data frame with one row per (FU, FEMALE) cell
-    giving N_SUBJECTS, N_CONTROL, N_TREATMENT (subject-level) and
-    N_SAMPLES (row-level)
--   **`$omics_summary`**: Per-analyte summary statistics at baseline
-    (FU=0), as a pre-treatment reference distribution
--   **`$covariates_summary`**: Summary of additional covariates at
-    baseline (FU=0); NULL if no additional covariates provided
+**`$pheno_summary`** (study-level): Data frame with one row per (FU, FEMALE) cell
+giving N_SUBJECTS, N_CONTROL, N_TREATMENT (subject-level) and N_SAMPLES (row-level).
 
-Randomization reports are study-level (not sex-stratified) and are
-returned as `$randomization_reports`:
+**`$variable_summaries`**: Sex-stratified (`$all`, `$male`, `$female`) omics and
+covariate summaries. Within each stratum, one entry per FU × treatment group cell
+(e.g. `$omics_FU0_Tx0`, `$omics_FU1_Tx1`, `$covariates_FU0_Tx0`, ...). Cells with
+no samples are omitted. Each omics entry is a per-analyte data frame (N_NONMISSING,
+MEAN, MEDIAN, SD, MIN, MAX); each covariates entry mirrors the same structure as
+before (COVARIATE_NAME, TYPE, N_NA, SUMMARY).
 
--   **`$analyte_randomization_report`**: Per-analyte baseline balance
-    check (Welch's t-test, treatment vs control)
--   **`$covariate_randomization_report`**: Baseline balance check for
-    `FEMALE` (if both sexes present) and any additional covariates.
-    Numeric variables use Welch's t-test; logical variables use
-    chi-squared; factor variables use chi-squared when all cell counts
-    are ≥ 5, otherwise Fisher's exact test (with simulation for tables
-    larger than 2×2). Reports VARIABLE, TYPE, TEST, STATISTIC,
-    MIN_CELL_COUNT, P_VALUE, and per-group SUMMARY columns.
+**`$randomization_reports`** (study-level, not sex-stratified):
+
+-   **`$omics_report`**: Per-analyte baseline balance check (Welch's t-test,
+    treatment vs control; MEAN_DIFFERENCE, COHENS_D, SE, P_VALUE, BH_P_VALUE)
+-   **`$covariate_report`**: Baseline balance check for `FEMALE` (if both sexes
+    present) and any additional covariates. Numeric: Welch's t-test; logical:
+    chi-squared; factor: chi-squared if min cell count ≥ 5, Fisher's exact
+    otherwise (simulated for tables larger than 2×2). Columns: VARIABLE, TYPE,
+    TEST, STATISTIC, MIN_CELL_COUNT, P_VALUE, SUMMARY_CONTROL, SUMMARY_TREATMENT.
 
 ---
 

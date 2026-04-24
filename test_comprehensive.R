@@ -15,7 +15,18 @@
 #   list(analysis_change = list(all, male, female),
 #        analysis_level  = list(all, male, female))
 # Reports are generated separately via FAST_omics_WAS_reports, returning:
-#   list(all, male, female)
+#   list(
+#     pheno_summary         = data.frame(...),   # study-level
+#     variable_summaries    = list(              # per stratum x FU x Tx cell
+#       all    = list(omics_FU0_Tx0, omics_FU0_Tx1, ..., covariates_FU0_Tx0, ...),
+#       male   = list(...),
+#       female = list(...)
+#     ),
+#     randomization_reports = list(              # study-level
+#       omics_report     = data.frame(...),
+#       covariate_report = data.frame(...)
+#     )
+#   )
 #
 # DNAm results have the same structure as non-DNAm, with an additional
 # BH_P_VALUE_FILTERED column that contains BH-corrected p-values for
@@ -131,6 +142,7 @@ check_non_dnam_structure <- function(analysis, expected_fu_levels) {
   list(
     "Coefficients exist" = !is.null(analysis$all$coefficients),
     "Coefficients have rows" = nrow(analysis$all$coefficients) > 0,
+    "Coefficients have N_OBS" = "N_OBS" %in% colnames(analysis$all$coefficients),
     "Coefficients have BH correction" = "BH_P_VALUE" %in% colnames(analysis$all$coefficients),
     "Treatment effects exist" = !is.null(analysis$all$treatment_effects),
     "Treatment effects have rows" = nrow(analysis$all$treatment_effects) > 0,
@@ -159,6 +171,7 @@ check_dnam_structure <- function(analysis, expected_fu_levels, filtered_probes) 
     "Coefficients exist" = !is.null(coefs),
     "Coefficients have rows" = nrow(coefs) > 0,
     "Has effect sizes" = all(!is.na(coefs$EFFECT_SIZE)),
+    "Coef has N_OBS" = "N_OBS" %in% colnames(coefs),
     "Coef has BH_P_VALUE" = "BH_P_VALUE" %in% colnames(coefs),
     "Coef has BH_P_VALUE_FILTERED" = "BH_P_VALUE_FILTERED" %in% colnames(coefs),
     "Filtered probes have BH_P_VALUE_FILTERED" = filtered_have_bh,
@@ -184,20 +197,33 @@ check_top_level_structure <- function(results) {
   )
 }
 
-#' Check reports structure: pheno, omics, covariates, randomization summaries
+#' Check reports structure: pheno_summary, variable_summaries, randomization_reports
 #' @param reports Reports object from FAST_omics_WAS_reports
+#' @param has_covariates Whether additional_covariates were passed (default TRUE)
 #' @return Named list of check results
-check_reports_structure <- function(reports) {
-  report <- reports$all
+check_reports_structure <- function(reports, has_covariates = TRUE) {
+  vs <- reports$variable_summaries
+  rr <- reports$randomization_reports
+
+  all_keys   <- names(vs$all)
+  omics_keys <- all_keys[startsWith(all_keys, "omics_")]
+  covar_keys <- all_keys[startsWith(all_keys, "covariates_")]
+
   list(
-    "Reports all stratum exists" = !is.null(report),
-    "Has pheno_summary" = !is.null(report$pheno_summary),
-    "Has omics_summary" = !is.null(report$omics_summary),
-    "Has randomization_summary" = !is.null(report$randomization_summary),
-    "Pheno summary has rows" = nrow(report$pheno_summary) > 0,
-    "Omics summary has rows" = nrow(report$omics_summary) > 0,
-    "Randomization summary has rows" = nrow(report$randomization_summary) > 0,
-    "Reports sex stratification works" = !is.null(reports$male) && !is.null(reports$female)
+    "Has pheno_summary"                  = !is.null(reports$pheno_summary),
+    "Pheno summary has rows"             = !is.null(reports$pheno_summary) && nrow(reports$pheno_summary) > 0,
+    "Has variable_summaries"             = !is.null(vs),
+    "variable_summaries has all stratum" = !is.null(vs$all),
+    "Baseline omics entries present"     = all(c("omics_FU0_Tx0", "omics_FU0_Tx1") %in% omics_keys),
+    "Omics entries have rows"            = length(omics_keys) > 0 && all(sapply(omics_keys, function(k) nrow(vs$all[[k]]) > 0)),
+    "Covariate entries present"          = !has_covariates || length(covar_keys) > 0,
+    "Covariate entries have rows"        = !has_covariates || all(sapply(covar_keys, function(k) nrow(vs$all[[k]]) > 0)),
+    "Sex stratification works"           = !is.null(vs$male) && !is.null(vs$female),
+    "Has randomization_reports"          = !is.null(rr),
+    "Has omics_report"                   = !is.null(rr$omics_report),
+    "Omics report has rows"              = !is.null(rr$omics_report) && nrow(rr$omics_report) > 0,
+    "Has covariate_report"               = !has_covariates || !is.null(rr$covariate_report),
+    "Covariate report has rows"          = !has_covariates || (!is.null(rr$covariate_report) && nrow(rr$covariate_report) > 0)
   )
 }
 

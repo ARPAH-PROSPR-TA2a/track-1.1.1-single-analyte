@@ -139,11 +139,14 @@
           }
           md$analyte_baseline <- baseline_vals
 
-          coef_table <- summary(lm(as.formula(formula_str), data = md))$coefficients
+          fit        <- lm(as.formula(formula_str), data = md)
+          n_obs      <- nrow(fit$model)
+          coef_table <- summary(fit)$coefficients
 
           coefs <- data.frame(
             ANALYTE_NAME = analyte_name,
             COEFFICIENT  = rownames(coef_table),
+            N_OBS        = n_obs,
             EFFECT_SIZE  = coef_table[, "Estimate"],
             SE           = coef_table[, "Std. Error"],
             P_VALUE      = coef_table[, "Pr(>|t|)"],
@@ -267,14 +270,15 @@
           }
           md$analyte_baseline <- baseline_vals
 
-          fit <- lmerTest::lmer(as.formula(formula_str), data = md, REML = FALSE,
-                                control = lme4::lmerControl(calc.derivs = FALSE))
-
+          fit        <- lmerTest::lmer(as.formula(formula_str), data = md, REML = FALSE,
+                                      control = lme4::lmerControl(calc.derivs = FALSE))
+          n_obs      <- nobs(fit)
           coef_table <- summary(fit)$coefficients
 
           coefs <- data.frame(
             ANALYTE_NAME = analyte_name,
             COEFFICIENT  = rownames(coef_table),
+            N_OBS        = n_obs,
             EFFECT_SIZE  = coef_table[, "Estimate"],
             SE           = coef_table[, "Std. Error"],
             P_VALUE      = coef_table[, "Pr(>|t|)"],
