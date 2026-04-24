@@ -119,7 +119,7 @@
     pheno <- pheno[!duplicated(subject_fu_pairs), ]
   }
   
-  # Step 5: Additional covariates validation
+  # Step 5: Additional covariates validation and NA filtering
   if (!is.null(additional_covariates)) {
     # Check all covariates exist in pheno
     missing_addl <- setdiff(additional_covariates, names(pheno))
@@ -127,22 +127,40 @@
       stop("Additional covariates not found in pheno: ", paste(missing_addl, collapse = ", "))
     }
   }
-  
-  # Validate each covariate (or skip if NULL)
+
+  # Validate each covariate type and drop rows with NA values
   for (covar in if (is.null(additional_covariates)) character(0) else additional_covariates) {
     col_data <- pheno[[covar]]
-    
-    # Check type
+
     if (!is.numeric(col_data) && !is.factor(col_data) && !is.logical(col_data)) {
       stop("Additional covariate '", covar, "' must be numeric, factor, or logical")
     }
-    
-    # Check for NAs
-    if (any(is.na(col_data))) {
-      warning("Additional covariate '", covar, "' contains NA values. Analysis sample will be reduced.")
+
+    na_rows <- is.na(col_data)
+    if (any(na_rows)) {
+      message("Dropping ", sum(na_rows), " sample(s) with NA values in covariate '", covar, "'.")
+      pheno <- pheno[!na_rows, ]
     }
   }
-  
+
+  # Step 5b: Subject-level completeness — keep only subjects with both a
+  # baseline (FU == 0) and at least one follow-up (FU > 0).  This ensures
+  # the analysis and reports operate on exactly the same set of subjects.
+  fu_num_current <- as.integer(as.character(pheno$FU))
+  subjects_with_baseline <- unique(pheno$SUBJECT_ID[fu_num_current == 0])
+  subjects_with_followup <- unique(pheno$SUBJECT_ID[fu_num_current > 0])
+  complete_subjects <- intersect(subjects_with_baseline, subjects_with_followup)
+
+  n_incomplete <- length(unique(pheno$SUBJECT_ID)) - length(complete_subjects)
+  if (n_incomplete > 0) {
+    message("Dropping ", n_incomplete, " subject(s) missing either a baseline or a follow-up sample.")
+  }
+  pheno <- pheno[pheno$SUBJECT_ID %in% complete_subjects, ]
+
+  if (nrow(pheno) == 0) {
+    stop("No subjects remain after requiring both a baseline and a follow-up sample with complete covariates.")
+  }
+
   # Step 6: Gender composition detection
   n_male <- sum(pheno$FEMALE == 0, na.rm = TRUE)
   n_female <- sum(pheno$FEMALE == 1, na.rm = TRUE)
