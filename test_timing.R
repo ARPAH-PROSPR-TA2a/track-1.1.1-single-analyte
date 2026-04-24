@@ -88,7 +88,7 @@ prep_result <- time_step("prepare pheno/omics", {
   }
 
   pheno <- pheno_raw[!duplicated(pheno_raw$SAMPLE_ID), ]
-  pheno <- pheno[complete.cases(pheno[, c("SAMPLE_ID", "FU", "SUBJECT_ID", "FEMALE", "CONTROL_STATUS")]), ]
+  pheno <- pheno[complete.cases(pheno[, c("SAMPLE_ID", "FU", "SUBJECT_ID", "FEMALE", "TREATMENT_GROUP")]), ]
 
   analyte_names <- rownames(omics_raw)
   sample_names  <- colnames(omics_raw)

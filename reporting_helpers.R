@@ -22,8 +22,8 @@
     cell <- pheno_df[pheno_df$FU == report$FU[i] &
                        pheno_df$FEMALE == report$FEMALE[i], ]
     report$N_SUBJECTS[i]  <- length(unique(cell$SUBJECT_ID))
-    report$N_CONTROL[i]   <- length(unique(cell$SUBJECT_ID[cell$CONTROL_STATUS == 0]))
-    report$N_TREATMENT[i] <- length(unique(cell$SUBJECT_ID[cell$CONTROL_STATUS == 1]))
+    report$N_CONTROL[i]   <- length(unique(cell$SUBJECT_ID[cell$TREATMENT_GROUP == 0]))
+    report$N_TREATMENT[i] <- length(unique(cell$SUBJECT_ID[cell$TREATMENT_GROUP == 1]))
     report$N_SAMPLES[i]   <- nrow(cell)
   }
 
@@ -147,7 +147,7 @@
   # Restrict to baseline
   pheno_baseline <- pheno_df[pheno_df$FU == 0, ]
 
-  control_status <- pheno_baseline$CONTROL_STATUS
+  control_status <- pheno_baseline$TREATMENT_GROUP
   ctrl_mask <- as.integer(as.character(control_status)) == 0
   trt_mask  <- as.integer(as.character(control_status)) == 1
 
@@ -285,7 +285,7 @@
     tryCatch({
       # Extract values for this analyte
       analyte_values <- as.numeric(omics_baseline[i, ])
-      control_status <- pheno_baseline$CONTROL_STATUS
+      control_status <- pheno_baseline$TREATMENT_GROUP
 
       # Split by group
       values_control <- analyte_values[control_status == 0]
@@ -349,7 +349,7 @@
 
 .generate_reports <- function(pheno_list, omics_list, additional_covariates = NULL) {
 
-  # --- Variable summaries: per stratum, per FU x CONTROL_STATUS cell ---
+  # --- Variable summaries: per stratum, per FU x TREATMENT_GROUP cell ---
   variable_summaries <- list(all = NULL, male = NULL, female = NULL)
 
   for (dataset in c("all", "male", "female")) {
@@ -367,7 +367,7 @@
       for (tx in tx_levels) {
         cell_key   <- paste0("_FU", fu, "_Tx", tx)
         cell_mask  <- as.character(pheno_df$FU) == fu &
-                      as.character(pheno_df$CONTROL_STATUS) == tx
+                      as.character(pheno_df$TREATMENT_GROUP) == tx
         cell_pheno <- pheno_df[cell_mask, ]
 
         if (nrow(cell_pheno) == 0) next

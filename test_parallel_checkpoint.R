@@ -100,7 +100,7 @@ if (any(sapply(pheno_raw, function(x) inherits(x, "haven_labelled")))) {
 }
 
 pheno <- pheno_raw[!duplicated(pheno_raw$SAMPLE_ID), ]
-pheno <- pheno[complete.cases(pheno[, c("SAMPLE_ID", "FU", "SUBJECT_ID", "FEMALE", "CONTROL_STATUS")]), ]
+pheno <- pheno[complete.cases(pheno[, c("SAMPLE_ID", "FU", "SUBJECT_ID", "FEMALE", "TREATMENT_GROUP")]), ]
 
 analyte_names_raw <- rownames(omics_raw)
 omics_full <- as.data.frame(omics_raw)

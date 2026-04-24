@@ -78,7 +78,7 @@
     model_data$analyte_baseline <- NA_real_
 
     # Build model formula
-    # analyte ~ CONTROL_STATUS + FEMALE + baseline_analyte + covariates
+    # analyte ~ TREATMENT_GROUP + FEMALE + baseline_analyte + covariates
     covariate_terms <- c("FEMALE", "analyte_baseline")
     if (!is.null(additional_covariates)) {
       covariate_terms <- c(covariate_terms, additional_covariates)
@@ -89,7 +89,7 @@
       covariate_terms <- setdiff(covariate_terms, "FEMALE")
     }
 
-    formula_str <- "analyte ~ CONTROL_STATUS"
+    formula_str <- "analyte ~ TREATMENT_GROUP"
     if (length(covariate_terms) > 0) {
       formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
     }
@@ -163,7 +163,7 @@
             row.names = NULL
           )
 
-          ctrl_idx <- grepl("^CONTROL_STATUS", rownames(coef_table))
+          ctrl_idx <- grepl("^TREATMENT_GROUP", rownames(coef_table))
           te <- data.frame(
             ANALYTE_NAME = analyte_name,
             FU           = fu_level,
@@ -228,7 +228,7 @@
     model_data$analyte_baseline <- NA_real_
 
     # Build model formula
-    # analyte ~ CONTROL_STATUS * factor(FU) + FEMALE + baseline_analyte + covariates + (1|SUBJECT_ID)
+    # analyte ~ TREATMENT_GROUP * factor(FU) + FEMALE + baseline_analyte + covariates + (1|SUBJECT_ID)
     # Extracts ALL fixed effect coefficients from the model
     covariate_terms <- c("FEMALE", "analyte_baseline")
     if (!is.null(additional_covariates)) {
@@ -240,7 +240,7 @@
       covariate_terms <- setdiff(covariate_terms, "FEMALE")
     }
 
-    formula_str <- "analyte ~ CONTROL_STATUS * FU"
+    formula_str <- "analyte ~ TREATMENT_GROUP * FU"
     if (length(covariate_terms) > 0) {
       formula_str <- paste(formula_str, paste(covariate_terms, collapse = " + "), sep = " + ")
     }
@@ -304,7 +304,7 @@
             row.names = NULL
           )
 
-          emm      <- emmeans::emmeans(fit, ~ CONTROL_STATUS | FU)
+          emm      <- emmeans::emmeans(fit, ~ TREATMENT_GROUP | FU)
           contr_df <- as.data.frame(pairs(emm, reverse = TRUE))
 
           te <- data.frame(

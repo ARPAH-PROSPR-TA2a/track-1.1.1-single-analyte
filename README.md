@@ -223,7 +223,7 @@ columns**:
 | `SUBJECT_ID`            | Character                | Subject identifier for tracking across follow-ups    | All SUBJECT_ID\*FU pairs must be unique |
 | `FU`                    | Factor                   | Follow-up timepoint                                  | Levels: 0 (baseline), 1..max (follow-ups), consecutive integers |
 | `FEMALE`                | Factor                   | Sex indicator                                        | Levels: 0 (male), 1 (female)            |
-| `CONTROL_STATUS`        | Factor                   | Treatment assignment                                 | Levels: 0 (control), 1 (treatment)      |
+| `TREATMENT_GROUP`        | Factor                   | Treatment assignment                                 | Levels: 0 (control), 1 (treatment)      |
 | *Additional Covariates* | *Factor/Numeric/Logical* | *Optional columns for additional analysis variables* | *Any valid values*                      |
 
 **Data requirements:**
@@ -233,18 +233,18 @@ columns**:
     dropped during validation
 -   Must contain both males (`FEMALE == 0`) and females (`FEMALE == 1`),
     otherwise gender stratification will be skipped
--   Must contain both control (`CONTROL_STATUS == 0`) and treatment
-    (`CONTROL_STATUS == 1`) groups
+-   Must contain both control (`TREATMENT_GROUP == 0`) and treatment
+    (`TREATMENT_GROUP == 1`) groups
 -   No duplicate `SAMPLE_ID` values
 -   All `SUBJECT_ID*FU` pairs must be unique
--   `FU`, `FEMALE`, and `CONTROL_STATUS` must be factors (or numeric
+-   `FU`, `FEMALE`, and `TREATMENT_GROUP` must be factors (or numeric
     values that will be automatically converted to factors)
--   `FEMALE` and `CONTROL_STATUS` must be non-missing for all samples
+-   `FEMALE` and `TREATMENT_GROUP` must be non-missing for all samples
 
 **Example structure:**
 
 ```         
-SAMPLE_ID      SUBJECT_ID  FU  CONTROL_STATUS  FEMALE  agebl  agevis
+SAMPLE_ID      SUBJECT_ID  FU  TREATMENT_GROUP  FEMALE  agebl  agevis
 sample_001     subj_001    0   1               1       55     56
 sample_002     subj_001    1   1               1       55     57
 sample_003     subj_002    0   0               0       62     63

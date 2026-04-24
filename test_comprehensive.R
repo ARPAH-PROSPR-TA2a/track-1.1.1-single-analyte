@@ -79,16 +79,16 @@ validate_treatment_effects_single_fu <- function(results) {
   sample_analyte <- te$ANALYTE_NAME[1]
   te_row <- te[te$ANALYTE_NAME == sample_analyte, ]
   coef_row <- coefs[coefs$ANALYTE_NAME == sample_analyte &
-                      grepl("^CONTROL_STATUS", coefs$COEFFICIENT), ]
+                      grepl("^TREATMENT_GROUP", coefs$COEFFICIENT), ]
 
   cat("  Sample analyte: ", sample_analyte, "\n")
   cat("  Treatment effect: ", round(te_row$EFFECT_SIZE, 6),
-      " CONTROL_STATUS coef: ", round(coef_row$EFFECT_SIZE, 6), "\n\n")
+      " TREATMENT_GROUP coef: ", round(coef_row$EFFECT_SIZE, 6), "\n\n")
 
   list(
-    "Effect size matches CONTROL_STATUS" = abs(te_row$EFFECT_SIZE - coef_row$EFFECT_SIZE) < 1e-10,
-    "SE matches CONTROL_STATUS" = abs(te_row$SE - coef_row$SE) < 1e-10,
-    "P-value matches CONTROL_STATUS" = abs(te_row$P_VALUE - coef_row$P_VALUE) < 1e-10
+    "Effect size matches TREATMENT_GROUP" = abs(te_row$EFFECT_SIZE - coef_row$EFFECT_SIZE) < 1e-10,
+    "SE matches TREATMENT_GROUP" = abs(te_row$SE - coef_row$SE) < 1e-10,
+    "P-value matches TREATMENT_GROUP" = abs(te_row$P_VALUE - coef_row$P_VALUE) < 1e-10
   )
 }
 
@@ -105,14 +105,14 @@ validate_treatment_effects_multi_fu <- function(results, method = "LME4") {
   coefs_analyte <- coefs[coefs$ANALYTE_NAME == sample_analyte, ]
 
   # Get relevant coefficients
-  ctrl_coef <- coefs_analyte[grepl("^CONTROL_STATUS[0-9]*$", coefs_analyte$COEFFICIENT), ]
-  interaction_coef <- coefs_analyte[grepl("CONTROL_STATUS.*:.*FU", coefs_analyte$COEFFICIENT), ]
+  ctrl_coef <- coefs_analyte[grepl("^TREATMENT_GROUP[0-9]*$", coefs_analyte$COEFFICIENT), ]
+  interaction_coef <- coefs_analyte[grepl("TREATMENT_GROUP.*:.*FU", coefs_analyte$COEFFICIENT), ]
 
-  # Treatment effect at FU=1 should match CONTROL_STATUS coefficient
+  # Treatment effect at FU=1 should match TREATMENT_GROUP coefficient
   te_fu1 <- te_analyte[te_analyte$FU == 1, ]
   effect_fu1_expected <- ctrl_coef$EFFECT_SIZE
 
-  # Treatment effect at FU=2 should equal CONTROL_STATUS + interaction
+  # Treatment effect at FU=2 should equal TREATMENT_GROUP + interaction
   te_fu2 <- te_analyte[te_analyte$FU == 2, ]
   effect_fu2_expected <- ctrl_coef$EFFECT_SIZE + interaction_coef$EFFECT_SIZE
 
@@ -128,7 +128,7 @@ validate_treatment_effects_multi_fu <- function(results, method = "LME4") {
       " naive=", round(naive_se_fu2, 6), "\n\n")
 
   list(
-    "FU=1 effect matches CONTROL_STATUS" = abs(te_fu1$EFFECT_SIZE - effect_fu1_expected) < 1e-6,
+    "FU=1 effect matches TREATMENT_GROUP" = abs(te_fu1$EFFECT_SIZE - effect_fu1_expected) < 1e-6,
     "FU=2 effect matches coefficient sum" = abs(te_fu2$EFFECT_SIZE - effect_fu2_expected) < 1e-6,
     "FU=2 SE differs from naive (uses covariance)" = abs(te_fu2$SE - naive_se_fu2) > 1e-10
   )
@@ -253,7 +253,7 @@ if (any(sapply(pheno_raw, function(x) inherits(x, "haven_labelled")))) {
 
 # Prepare pheno data
 pheno <- pheno_raw[!duplicated(pheno_raw$SAMPLE_ID), ]
-pheno <- pheno[complete.cases(pheno[, c("SAMPLE_ID", "FU", "SUBJECT_ID", "FEMALE", "CONTROL_STATUS")]), ]
+pheno <- pheno[complete.cases(pheno[, c("SAMPLE_ID", "FU", "SUBJECT_ID", "FEMALE", "TREATMENT_GROUP")]), ]
 
 # Prepare omics data - ensure overlap with both probe lists for DNAm tests
 analyte_names <- rownames(omics_raw)

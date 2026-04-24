@@ -15,14 +15,14 @@ A data frame with one row per sample (one subject can appear multiple times, onc
 | `SAMPLE_ID` | character | Unique across the entire data frame — no duplicates |
 | `SUBJECT_ID` | character | Repeated across timepoints for the same person; every `SUBJECT_ID × FU` pair must be unique |
 | `FU` | factor (or numeric, auto-coerced) | Must contain `0` (baseline) and at least one follow-up (`1`, `2`, …); values must be consecutive integers with no gaps |
-| `CONTROL_STATUS` | factor (or numeric, auto-coerced) | Binary: `0` = control, `1` = treatment; both groups must be present |
+| `TREATMENT_GROUP` | factor (or numeric, auto-coerced) | Binary: `0` = control, `1` = treatment; both groups must be present |
 | `FEMALE` | factor (or numeric, auto-coerced) | Binary: `0` = male, `1` = female |
 | *Additional covariates* | numeric / factor / logical | Any extra columns named in `additional_covariates`; NAs are allowed but reduce sample size |
 
 **Example:**
 
 ```
-SAMPLE_ID    SUBJECT_ID   FU   CONTROL_STATUS   FEMALE   age   bmi
+SAMPLE_ID    SUBJECT_ID   FU   TREATMENT_GROUP   FEMALE   age   bmi
 s001         subj_01      0    1                1        55    27.1
 s002         subj_01      1    1                1        55    27.1
 s003         subj_02      0    0                0        62    24.8
@@ -151,7 +151,7 @@ Each stratum contains two tables: `$coefficients` and `$treatment_effects`.
 
 The `change` response is `FU_value − baseline_value`; the `level` response is
 `FU_value`. Both include `analyte_baseline` as a covariate, so both are
-baseline-adjusted. Interpretation of `CONTROL_STATUS` effects differs:
+baseline-adjusted. Interpretation of `TREATMENT_GROUP` effects differs:
 `change` gives the treatment effect on the *change from baseline*, while
 `level` gives the treatment effect on the *absolute post-treatment level*.
 
@@ -163,13 +163,13 @@ All fixed-effect coefficients from the fitted model, for every analyte.
 For a single follow-up (LM), the model is:
 
 ```
-response ~ CONTROL_STATUS + FEMALE + analyte_baseline + [additional covariates]
+response ~ TREATMENT_GROUP + FEMALE + analyte_baseline + [additional covariates]
 ```
 
 For multiple follow-ups (LME4):
 
 ```
-response ~ CONTROL_STATUS * FU + FEMALE + analyte_baseline + [additional covariates] + (1 | SUBJECT_ID)
+response ~ TREATMENT_GROUP * FU + FEMALE + analyte_baseline + [additional covariates] + (1 | SUBJECT_ID)
 ```
 
 One row per analyte × coefficient combination.
@@ -179,13 +179,13 @@ One row per analyte × coefficient combination.
 ```
 ANALYTE_NAME   COEFFICIENT          EFFECT_SIZE    SE       P_VALUE   BH_P_VALUE
 protein_A      (Intercept)          0.231          0.089    0.010     0.051
-protein_A      CONTROL_STATUS1      0.312          0.067    0.000     0.002
+protein_A      TREATMENT_GROUP1      0.312          0.067    0.000     0.002
 protein_A      FEMALE1             -0.118          0.064    0.067     0.201
 protein_A      analyte_baseline     0.794          0.041    0.000     0.000
 protein_A      age                  0.004          0.003    0.189     0.389
 protein_A      bmi                  0.007          0.005    0.211     0.389
 protein_B      (Intercept)         -0.041          0.072    0.569     0.712
-protein_B      CONTROL_STATUS1     -0.028          0.061    0.647     0.712
+protein_B      TREATMENT_GROUP1     -0.028          0.061    0.647     0.712
 protein_B      FEMALE1              0.053          0.058    0.362     0.589
 protein_B      analyte_baseline     0.831          0.038    0.000     0.000
 protein_B      age                 -0.002          0.003    0.501     0.712
@@ -197,11 +197,11 @@ protein_B      bmi                  0.003          0.004    0.488     0.712
 | Column | Description |
 |:---|:---|
 | `ANALYTE_NAME` | Analyte identifier|
-| `COEFFICIENT` | Name of the model term, e.g. `(Intercept)`, `CONTROL_STATUS1`, `analyte_baseline`. |
+| `COEFFICIENT` | Name of the model term, e.g. `(Intercept)`, `TREATMENT_GROUP1`, `analyte_baseline`. |
 | `EFFECT_SIZE` | Coefficient estimate (β) from the model. |
 | `SE` | Standard error of the coefficient estimate |
 | `P_VALUE` | Two-sided p-value. From `summary(lm_fit)$coefficients` for LM; from `summary(lmer_fit)$coefficients` with Satterthwaite degrees of freedom for LME4 |
-| `BH_P_VALUE` | Benjamini-Hochberg corrected p-value, applied separately within each `COEFFICIENT` group across all analytes (e.g., all `CONTROL_STATUS1` p-values are corrected together) |
+| `BH_P_VALUE` | Benjamini-Hochberg corrected p-value, applied separately within each `COEFFICIENT` group across all analytes (e.g., all `TREATMENT_GROUP1` p-values are corrected together) |
 | `BH_P_VALUE_FILTERED` | *(DNAm only)* BH correction applied only within the filtered probe set for probes in that set; `NA` for all other probes. See [DNAm Filtered BH](#dnam-filtered-bh) |
 
 ---
@@ -209,10 +209,10 @@ protein_B      bmi                  0.003          0.004    0.488     0.712
 ### `$treatment_effects`
 
 The treatment-vs-control contrast at each follow-up level, one row per analyte × FU.
-For LM (single FU), this is identical to the `CONTROL_STATUS1` row in `$coefficients`.
+For LM (single FU), this is identical to the `TREATMENT_GROUP1` row in `$coefficients`.
 For LME4 (multiple FUs), these are estimated marginal means contrasts from `emmeans`,
-which properly account for the covariance between the `CONTROL_STATUS` main effect
-and the `CONTROL_STATUS:FU` interaction.
+which properly account for the covariance between the `TREATMENT_GROUP` main effect
+and the `TREATMENT_GROUP:FU` interaction.
 
 **Example (two follow-up timepoints, LME4):**
 
@@ -269,8 +269,8 @@ FU   FEMALE   N_SUBJECTS   N_CONTROL   N_TREATMENT   N_SAMPLES
 | `FU` | Follow-up timepoint (0 = baseline) |
 | `FEMALE` | Sex indicator: 0 = male, 1 = female |
 | `N_SUBJECTS` | Number of unique subjects in this cell |
-| `N_CONTROL` | Number of unique control subjects (`CONTROL_STATUS == 0`) |
-| `N_TREATMENT` | Number of unique treatment subjects (`CONTROL_STATUS == 1`) |
+| `N_CONTROL` | Number of unique control subjects (`TREATMENT_GROUP == 0`) |
+| `N_TREATMENT` | Number of unique treatment subjects (`TREATMENT_GROUP == 1`) |
 | `N_SAMPLES` | Raw number of rows (samples) in this cell; equals `N_SUBJECTS` when each person has one sample per timepoint |
 
 ---

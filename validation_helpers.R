@@ -44,7 +44,7 @@
   }
   
   # Step 2: Required columns check
-  required_cols <- c("SAMPLE_ID", "FU", "SUBJECT_ID", "FEMALE", "CONTROL_STATUS")
+  required_cols <- c("SAMPLE_ID", "FU", "SUBJECT_ID", "FEMALE", "TREATMENT_GROUP")
   missing_cols <- setdiff(required_cols, names(pheno))
   if (length(missing_cols) > 0) {
     stop("Missing required columns: ", paste(missing_cols, collapse = ", "))
@@ -94,16 +94,16 @@
     pheno$FEMALE <- factor(pheno$FEMALE)
   }
   
-  # CONTROL_STATUS validation
-  if (!all(pheno$CONTROL_STATUS %in% 0:1)) {
-    stop("CONTROL_STATUS must contain only values 0 or 1")
+  # TREATMENT_GROUP validation
+  if (!all(pheno$TREATMENT_GROUP %in% 0:1)) {
+    stop("TREATMENT_GROUP must contain only values 0 or 1")
   }
-  if (!any(pheno$CONTROL_STATUS == 0) || !any(pheno$CONTROL_STATUS == 1)) {
-    stop("pheno must contain both control (CONTROL_STATUS == 0) and treatment (CONTROL_STATUS == 1)")
+  if (!any(pheno$TREATMENT_GROUP == 0) || !any(pheno$TREATMENT_GROUP == 1)) {
+    stop("pheno must contain both control (TREATMENT_GROUP == 0) and treatment (TREATMENT_GROUP == 1)")
   }
-  if (!is.factor(pheno$CONTROL_STATUS)) {
-    warning("CONTROL_STATUS column is not a factor. Converting to factor.")
-    pheno$CONTROL_STATUS <- factor(pheno$CONTROL_STATUS)
+  if (!is.factor(pheno$TREATMENT_GROUP)) {
+    warning("TREATMENT_GROUP column is not a factor. Converting to factor.")
+    pheno$TREATMENT_GROUP <- factor(pheno$TREATMENT_GROUP)
   }
   
   # Step 4: Column-specific validation
