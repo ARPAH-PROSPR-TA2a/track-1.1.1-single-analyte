@@ -6,16 +6,16 @@
 # Usage:
 #   source("plotting_helpers.R")
 #   results <- FAST_omics_WAS(pheno, omics)
-#   generate_all_plots(results, analysis = "change")
-#   generate_all_plots(results$change)  # equivalent
+#   generate_all_plots(results, analysis = "analysis_change")
+#   generate_all_plots(results$analysis_change)  # equivalent
 
 library(qqman)
 library(ggplot2)
 
 # Accept either:
 # - a stratum-level results object (list(all/male/female)), OR
-# - the full FAST_omics_WAS return value (list(change=<...>, level=<...>)).
-.coerce_to_strata_results <- function(results, analysis = c("change", "level")) {
+# - the full FAST_omics_WAS return value (list(analysis_change=<...>, analysis_level=<...>)).
+.coerce_to_strata_results <- function(results, analysis = c("analysis_change", "analysis_level")) {
   analysis <- match.arg(analysis)
 
   if (is.list(results) && all(c("all", "male", "female") %in% names(results))) {
@@ -26,7 +26,7 @@ library(ggplot2)
     return(results[[analysis]])
   }
 
-  stop("Invalid results object. Pass FAST_omics_WAS output (with $change/$level) or a stratum-level results list.")
+  stop("Invalid results object. Pass FAST_omics_WAS output (with $analysis_change/$analysis_level) or a stratum-level results list.")
 }
 
 # ===== INDIVIDUAL PLOT FUNCTIONS =====
@@ -37,10 +37,10 @@ library(ggplot2)
 #' @param stratum "all", "male", or "female"
 #' @param fu Which FU level to plot
 #' @param probe_set "full" (all probes) or "filtered" (filtered probes only, DNAm)
-#' @param analysis If passing the full FAST_omics_WAS output, which analysis to plot ("change" or "level")
+#' @param analysis If passing the full FAST_omics_WAS output, which analysis to plot ("analysis_change" or "analysis_level")
 #' @param title Optional custom title (auto-generated if NULL)
 plot_qq <- function(results, stratum = "all", fu = 1, probe_set = "full",
-                    analysis = c("change", "level"), title = NULL) {
+                    analysis = c("analysis_change", "analysis_level"), title = NULL) {
 
   results <- .coerce_to_strata_results(results, analysis = match.arg(analysis))
 
@@ -74,10 +74,10 @@ plot_qq <- function(results, stratum = "all", fu = 1, probe_set = "full",
 #' @param fu Which FU level to plot
 #' @param probe_set "full" (all probes) or "filtered" (filtered probes only, DNAm)
 #' @param p_threshold Significance threshold for coloring (default 0.05, applied to BH)
-#' @param analysis If passing the full FAST_omics_WAS output, which analysis to plot ("change" or "level")
+#' @param analysis If passing the full FAST_omics_WAS output, which analysis to plot ("analysis_change" or "analysis_level")
 #' @param title Optional custom title (auto-generated if NULL)
 plot_volcano <- function(results, stratum = "all", fu = 1, probe_set = "full",
-                         p_threshold = 0.05, analysis = c("change", "level"), title = NULL) {
+                         p_threshold = 0.05, analysis = c("analysis_change", "analysis_level"), title = NULL) {
   results <- .coerce_to_strata_results(results, analysis = match.arg(analysis))
 
   te <- results[[stratum]]$treatment_effects
@@ -138,7 +138,7 @@ plot_volcano <- function(results, stratum = "all", fu = 1, probe_set = "full",
 #'
 #' @param results Results object from FAST_omics_WAS
 #' @param figures_dir Directory to save PDFs (default "Figures", created if needed)
-generate_all_plots <- function(results, figures_dir = NULL, analysis = c("change", "level")) {
+generate_all_plots <- function(results, figures_dir = NULL, analysis = c("analysis_change", "analysis_level")) {
 
   results <- .coerce_to_strata_results(results, analysis = match.arg(analysis))
 
