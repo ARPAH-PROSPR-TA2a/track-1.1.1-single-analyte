@@ -2,6 +2,7 @@ Figures/
 PracticeData/
 PracticeData.zip
 test_WTM.R
+*.html
 .Rhistory
 usersguide.pdf
 1.1.1 Pipeline Map.pdf
