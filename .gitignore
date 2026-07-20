@@ -2,14 +2,10 @@ Figures/
 PracticeData/
 PracticeData.zip
 test_WTM.R
+*.html
 .Rhistory
 usersguide.pdf
 1.1.1 Pipeline Map.pdf
-CODE_WALKTHROUGH.html
-CODE_WALKTHROUGH_v2.html
-CODE_WALKTHROUGH.md
-CODE_WALKTHROUGH_v2.md
-CODE_WALKTHROUGH_v3.md
 analytic_strategy.txt
 analysis_from_richard.R
 1.1.1 Pipeline Map.pdf

@@ -304,11 +304,6 @@ Check maximum follow-up level
 └─ max FU > 1 → Use LME4 (linear mixed effects via lmerTest::lmer)
 ```
 
-## More Information
-
-For comprehensive examples and detailed documentation of the analysis
-pipeline, see [CODE_WALKTHROUGH_v3.html](CODE_WALKTHROUGH_v3.html).
-
 ## Plotting Results
 
 The pipeline includes plotting functions for visualizing treatment effects.
@@ -339,6 +334,15 @@ Two plot types are produced:
     significant coloring based on BH-corrected p-values (via `ggplot2`)
 
 Requires packages: `qqman`, `ggplot2`.
+
+## Additional Documentation
+
+-   [Inputs and outputs](INPUTS_OUTPUTS.md): required phenotype and omics
+    input formats, result object structure, and report outputs
+-   [Code walkthrough](CODE_WALKTHROUGH_v3.md): implementation overview
+    for validation, analysis, reporting, batching, and DNAm probe filtering
+-   [Examples](Examples/): small runnable DNAm, proteomics, and
+    metabolomics examples with static toy data and saved example results
 
 ## Contact
 
