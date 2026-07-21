@@ -32,7 +32,7 @@ FAST_omics_WAS <- function(pheno,
   on.exit(future::plan(old_plan), add = TRUE)
   
   if (n_cores > 1L) {
-    future::plan(future::multisession, workers = n_cores)
+    future::plan(future::multicore, workers = n_cores)
   } else {
     future::plan(future::sequential)
   }

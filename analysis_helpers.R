@@ -57,6 +57,31 @@
 }
 
 
+.bind_rows_or_null <- function(dfs) {
+  dfs <- Filter(function(x) !is.null(x) && nrow(x) > 0, dfs)
+  if (length(dfs) == 0) {
+    return(NULL)
+  }
+
+  out <- do.call(rbind, dfs)
+  rownames(out) <- NULL
+  out
+}
+
+
+.combine_analysis_results <- function(results) {
+  results <- Filter(Negate(is.null), results)
+  if (length(results) == 0) {
+    return(list(coefficients = NULL, treatment_effects = NULL))
+  }
+
+  list(
+    coefficients = .bind_rows_or_null(lapply(results, `[[`, "coefficients")),
+    treatment_effects = .bind_rows_or_null(lapply(results, `[[`, "treatment_effects"))
+  )
+}
+
+
 .perform_lm_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL, response_type = c("change", "level"),
                                  checkpoint_dir = NULL, checkpoint_batch_size = 2000L) {
 
@@ -112,92 +137,109 @@
       dir.create(checkpoint_dir, recursive = TRUE, showWarnings = FALSE)
     }
 
-    batches     <- split(seq_along(analyte_names),
-                         ceiling(seq_along(analyte_names) / checkpoint_batch_size))
-    all_results <- vector("list", length(analyte_names))
+    batches <- split(seq_along(analyte_names),
+                     ceiling(seq_along(analyte_names) / checkpoint_batch_size))
+    coefficient_batches <- vector("list", length(batches))
+    treatment_batches <- vector("list", length(batches))
 
     for (b in seq_along(batches)) {
-      batch      <- batches[[b]]
+      batch <- batches[[b]]
       batch_file <- if (!is.null(checkpoint_dir)) file.path(checkpoint_dir, paste0("batch_", b, ".rds")) else NULL
 
       if (!is.null(batch_file) && file.exists(batch_file)) {
-        all_results[batch] <- readRDS(batch_file)
+        batch_payload <- readRDS(batch_file)
+        coefficient_batches[[b]] <- batch_payload$coefficients
+        treatment_batches[[b]] <- batch_payload$treatment_effects
         next
       }
 
-      # Pre-extract per-analyte data so omics_df and omics_baseline_matrix are
-      # not captured in the future_map closure. Without this, future exports the
-      # full matrices (~GB for DNAm) to every worker rather than one row each.
       batch_items <- lapply(batch, function(i) list(
-        analyte_name  = analyte_names[i],
-        fu_values     = as.numeric(omics_df[i, shared_samples]),
+        analyte_name = analyte_names[i],
+        fu_values = as.numeric(omics_df[i, shared_samples]),
         baseline_vals = omics_baseline_matrix[i, baseline_col_idx]
       ))
 
-      batch_results <- furrr::future_map(batch_items, function(item) {
-        tryCatch({
-          analyte_name  <- item$analyte_name
-          fu_values     <- item$fu_values
-          baseline_vals <- item$baseline_vals
+      n_workers <- min(future::nbrOfWorkers(), length(batch_items))
+      if (n_workers <= 1L) {
+        worker_chunks <- list(batch_items)
+      } else {
+        worker_chunks <- split(
+          batch_items,
+          cut(seq_along(batch_items), breaks = n_workers, labels = FALSE)
+        )
+      }
 
-          md <- model_data
-          if (response_type == "change") {
-            md$analyte <- fu_values - baseline_vals
-          } else {
-            md$analyte <- fu_values
-          }
-          md$analyte_baseline <- baseline_vals
+      chunk_results <- furrr::future_map(worker_chunks, function(items) {
+        analyte_results <- lapply(items, function(item) {
+          tryCatch({
+            analyte_name <- item$analyte_name
+            fu_values <- item$fu_values
+            baseline_vals <- item$baseline_vals
 
-          fit        <- lm(as.formula(formula_str), data = md)
-          n_obs      <- nrow(fit$model)
-          coef_table <- summary(fit)$coefficients
+            md <- model_data
+            if (response_type == "change") {
+              md$analyte <- fu_values - baseline_vals
+            } else {
+              md$analyte <- fu_values
+            }
+            md$analyte_baseline <- baseline_vals
 
-          coefs <- data.frame(
-            ANALYTE_NAME = analyte_name,
-            COEFFICIENT  = rownames(coef_table),
-            N_OBS        = n_obs,
-            EFFECT_SIZE  = coef_table[, "Estimate"],
-            SE           = coef_table[, "Std. Error"],
-            P_VALUE      = coef_table[, "Pr(>|t|)"],
-            stringsAsFactors = FALSE,
-            row.names = NULL
-          )
+            fit <- lm(as.formula(formula_str), data = md)
+            n_obs <- nrow(fit$model)
+            coef_table <- summary(fit)$coefficients
 
-          ctrl_idx <- grepl("^TREATMENT_GROUP", rownames(coef_table))
-          te <- data.frame(
-            ANALYTE_NAME = analyte_name,
-            FU           = fu_level,
-            EFFECT_SIZE  = coef_table[ctrl_idx, "Estimate"],
-            SE           = coef_table[ctrl_idx, "Std. Error"],
-            P_VALUE      = coef_table[ctrl_idx, "Pr(>|t|)"],
-            stringsAsFactors = FALSE,
-            row.names = NULL
-          )
+            coefs <- data.frame(
+              ANALYTE_NAME = analyte_name,
+              COEFFICIENT = rownames(coef_table),
+              N_OBS = n_obs,
+              EFFECT_SIZE = coef_table[, "Estimate"],
+              SE = coef_table[, "Std. Error"],
+              P_VALUE = coef_table[, "Pr(>|t|)"],
+              stringsAsFactors = FALSE,
+              row.names = NULL
+            )
 
-          list(coefficients = coefs, treatment_effects = te)
+            ctrl_idx <- grepl("^TREATMENT_GROUP", rownames(coef_table))
+            te <- data.frame(
+              ANALYTE_NAME = analyte_name,
+              FU = fu_level,
+              EFFECT_SIZE = coef_table[ctrl_idx, "Estimate"],
+              SE = coef_table[ctrl_idx, "Std. Error"],
+              P_VALUE = coef_table[ctrl_idx, "Pr(>|t|)"],
+              stringsAsFactors = FALSE,
+              row.names = NULL
+            )
 
-        }, error = function(e) {
-          warning("Error processing analyte '", item$analyte_name, "': ", e$message)
-          NULL
+            list(coefficients = coefs, treatment_effects = te)
+          }, error = function(e) {
+            warning("Error processing analyte '", item$analyte_name, "': ", e$message)
+            NULL
+          })
         })
+
+        .combine_analysis_results(analyte_results)
       }, .options = furrr::furrr_options(seed = TRUE))
 
+      batch_payload <- .combine_analysis_results(chunk_results)
+
       if (!is.null(batch_file)) {
-        saveRDS(batch_results, paste0(batch_file, ".tmp"))
+        saveRDS(batch_payload, paste0(batch_file, ".tmp"))
         file.rename(paste0(batch_file, ".tmp"), batch_file)
       }
 
-      all_results[batch] <- batch_results
+      coefficient_batches[[b]] <- batch_payload$coefficients
+      treatment_batches[[b]] <- batch_payload$treatment_effects
+
+      rm(batch_items, worker_chunks, chunk_results, batch_payload)
+      invisible(gc())
     }
 
-    all_results <- Filter(Negate(is.null), all_results)
+    coefficients <- .bind_rows_or_null(coefficient_batches)
+    treatment_effects <- .bind_rows_or_null(treatment_batches)
 
-    if (length(all_results) == 0) return(NULL)
-
-    coefficients      <- do.call(rbind, lapply(all_results, `[[`, "coefficients"))
-    treatment_effects <- do.call(rbind, lapply(all_results, `[[`, "treatment_effects"))
-    row.names(coefficients)      <- NULL
-    row.names(treatment_effects) <- NULL
+    if (is.null(coefficients) && is.null(treatment_effects)) {
+      return(NULL)
+    }
 
     return(list(
       coefficients = coefficients,
@@ -252,95 +294,112 @@
       dir.create(checkpoint_dir, recursive = TRUE, showWarnings = FALSE)
     }
 
-    batches     <- split(seq_along(analyte_names),
-                         ceiling(seq_along(analyte_names) / checkpoint_batch_size))
-    all_results <- vector("list", length(analyte_names))
+    batches <- split(seq_along(analyte_names),
+                     ceiling(seq_along(analyte_names) / checkpoint_batch_size))
+    coefficient_batches <- vector("list", length(batches))
+    treatment_batches <- vector("list", length(batches))
 
     for (b in seq_along(batches)) {
-      batch      <- batches[[b]]
+      batch <- batches[[b]]
       batch_file <- if (!is.null(checkpoint_dir)) file.path(checkpoint_dir, paste0("batch_", b, ".rds")) else NULL
 
       if (!is.null(batch_file) && file.exists(batch_file)) {
-        all_results[batch] <- readRDS(batch_file)
+        batch_payload <- readRDS(batch_file)
+        coefficient_batches[[b]] <- batch_payload$coefficients
+        treatment_batches[[b]] <- batch_payload$treatment_effects
         next
       }
 
-      # Pre-extract per-analyte data so omics_df and omics_baseline_matrix are
-      # not captured in the future_map closure. Without this, future exports the
-      # full matrices (~GB for DNAm) to every worker rather than one row each.
       batch_items <- lapply(batch, function(i) list(
-        analyte_name  = analyte_names[i],
-        fu_values     = as.numeric(omics_df[i, shared_samples]),
+        analyte_name = analyte_names[i],
+        fu_values = as.numeric(omics_df[i, shared_samples]),
         baseline_vals = omics_baseline_matrix[i, baseline_col_idx]
       ))
 
-      batch_results <- furrr::future_map(batch_items, function(item) {
-        tryCatch({
-          analyte_name  <- item$analyte_name
-          fu_values     <- item$fu_values
-          baseline_vals <- item$baseline_vals
+      n_workers <- min(future::nbrOfWorkers(), length(batch_items))
+      if (n_workers <= 1L) {
+        worker_chunks <- list(batch_items)
+      } else {
+        worker_chunks <- split(
+          batch_items,
+          cut(seq_along(batch_items), breaks = n_workers, labels = FALSE)
+        )
+      }
 
-          md <- model_data
-          if (response_type == "change") {
-            md$analyte <- fu_values - baseline_vals
-          } else {
-            md$analyte <- fu_values
-          }
-          md$analyte_baseline <- baseline_vals
+      chunk_results <- furrr::future_map(worker_chunks, function(items) {
+        analyte_results <- lapply(items, function(item) {
+          tryCatch({
+            analyte_name <- item$analyte_name
+            fu_values <- item$fu_values
+            baseline_vals <- item$baseline_vals
 
-          fit        <- lmerTest::lmer(as.formula(formula_str), data = md, REML = FALSE,
-                                      control = lme4::lmerControl(calc.derivs = FALSE))
-          n_obs      <- nobs(fit)
-          coef_table <- summary(fit)$coefficients
+            md <- model_data
+            if (response_type == "change") {
+              md$analyte <- fu_values - baseline_vals
+            } else {
+              md$analyte <- fu_values
+            }
+            md$analyte_baseline <- baseline_vals
 
-          coefs <- data.frame(
-            ANALYTE_NAME = analyte_name,
-            COEFFICIENT  = rownames(coef_table),
-            N_OBS        = n_obs,
-            EFFECT_SIZE  = coef_table[, "Estimate"],
-            SE           = coef_table[, "Std. Error"],
-            P_VALUE      = coef_table[, "Pr(>|t|)"],
-            stringsAsFactors = FALSE,
-            row.names = NULL
-          )
+            fit <- lmerTest::lmer(as.formula(formula_str), data = md, REML = FALSE,
+                                  control = lme4::lmerControl(calc.derivs = FALSE))
+            n_obs <- nobs(fit)
+            coef_table <- summary(fit)$coefficients
 
-          emm      <- emmeans::emmeans(fit, ~ TREATMENT_GROUP | FU)
-          contr_df <- as.data.frame(pairs(emm, reverse = TRUE))
+            coefs <- data.frame(
+              ANALYTE_NAME = analyte_name,
+              COEFFICIENT = rownames(coef_table),
+              N_OBS = n_obs,
+              EFFECT_SIZE = coef_table[, "Estimate"],
+              SE = coef_table[, "Std. Error"],
+              P_VALUE = coef_table[, "Pr(>|t|)"],
+              stringsAsFactors = FALSE,
+              row.names = NULL
+            )
 
-          te <- data.frame(
-            ANALYTE_NAME = analyte_name,
-            FU           = as.integer(as.character(contr_df$FU)),
-            EFFECT_SIZE  = contr_df$estimate,
-            SE           = contr_df$SE,
-            P_VALUE      = contr_df$p.value,
-            stringsAsFactors = FALSE,
-            row.names = NULL
-          )
+            emm <- emmeans::emmeans(fit, ~ TREATMENT_GROUP | FU)
+            contr_df <- as.data.frame(pairs(emm, reverse = TRUE))
 
-          list(coefficients = coefs, treatment_effects = te)
+            te <- data.frame(
+              ANALYTE_NAME = analyte_name,
+              FU = as.integer(as.character(contr_df$FU)),
+              EFFECT_SIZE = contr_df$estimate,
+              SE = contr_df$SE,
+              P_VALUE = contr_df$p.value,
+              stringsAsFactors = FALSE,
+              row.names = NULL
+            )
 
-        }, error = function(e) {
-          warning("Error processing analyte '", item$analyte_name, "': ", e$message)
-          NULL
+            list(coefficients = coefs, treatment_effects = te)
+          }, error = function(e) {
+            warning("Error processing analyte '", item$analyte_name, "': ", e$message)
+            NULL
+          })
         })
+
+        .combine_analysis_results(analyte_results)
       }, .options = furrr::furrr_options(seed = TRUE, packages = c("lme4", "lmerTest", "emmeans")))
 
+      batch_payload <- .combine_analysis_results(chunk_results)
+
       if (!is.null(batch_file)) {
-        saveRDS(batch_results, paste0(batch_file, ".tmp"))
+        saveRDS(batch_payload, paste0(batch_file, ".tmp"))
         file.rename(paste0(batch_file, ".tmp"), batch_file)
       }
 
-      all_results[batch] <- batch_results
+      coefficient_batches[[b]] <- batch_payload$coefficients
+      treatment_batches[[b]] <- batch_payload$treatment_effects
+
+      rm(batch_items, worker_chunks, chunk_results, batch_payload)
+      invisible(gc())
     }
 
-    all_results <- Filter(Negate(is.null), all_results)
+    coefficients <- .bind_rows_or_null(coefficient_batches)
+    treatment_effects <- .bind_rows_or_null(treatment_batches)
 
-    if (length(all_results) == 0) return(NULL)
-
-    coefficients      <- do.call(rbind, lapply(all_results, `[[`, "coefficients"))
-    treatment_effects <- do.call(rbind, lapply(all_results, `[[`, "treatment_effects"))
-    row.names(coefficients)      <- NULL
-    row.names(treatment_effects) <- NULL
+    if (is.null(coefficients) && is.null(treatment_effects)) {
+      return(NULL)
+    }
 
     return(list(
       coefficients = coefficients,
