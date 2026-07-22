@@ -33,6 +33,7 @@ validation_helpers.R          # Input validation and data subsetting
 analysis_helpers.R            # Statistical analysis (lm / lmerTest), parallelization, checkpointing
 reporting_helpers.R           # QC and summary report generation
 plotting_helpers.R            # QQ + volcano plotting from treatment_effects
+test_omics_type.R             # omics_type allowlist and silent "other" regression test
 test_comprehensive.R          # Functional test suite (2x2 scenario matrix)
 test_parallel_checkpoint.R    # Parallelization and checkpointing tests
 ```
@@ -132,8 +133,8 @@ Required columns:
 **File**: `validation_helpers.R`
 
 - `.validate_omics_type(omics_type)`:
-  - Enforces `omics_type %in% c("DNAm", "Proteomics", "Metabolomics")`
-  - Prints reminders about expected preprocessing conventions (e.g., DNAm M-values)
+  - Enforces `omics_type %in% c("DNAm", "Proteomics", "Metabolomics", "other")`
+  - Prints reminders about expected preprocessing conventions for omics-specific types; `"other"` is silent
 - `.validate_pheno(pheno, additional_covariates)`:
   - Checks required columns and value constraints (FU must be 0,1,2,... with no gaps)
   - Coerces `FU`, `TREATMENT_GROUP`, `FEMALE` to factors if needed

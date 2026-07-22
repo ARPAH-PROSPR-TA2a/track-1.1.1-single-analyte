@@ -74,8 +74,9 @@ reports$all$omics_summary
 -   **`omics`** (data.frame): Omics data with required structure (see
     Data Format section below)
 -   **`omics_type`** (character): Type of omics data being analyzed.
-    Options: `"Proteomics"`, `"DNAm"`, `"Metabolomics"`. Default:
-    `"Proteomics"`
+    Options: `"Proteomics"`, `"DNAm"`, `"Metabolomics"`, `"other"`.
+    Use `"other"` for non-omics feature data; it produces no preprocessing
+    reminder and applies no type-specific filtering. Default: `"Proteomics"`
 -   **`additional_covariates`** (character vector, optional): Names of
     additional covariates to include in regression models. Must be
     column names in the `pheno` data frame. These columns must be
