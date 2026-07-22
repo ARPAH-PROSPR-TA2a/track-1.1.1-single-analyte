@@ -8,7 +8,7 @@
 
 .validate_omics_type <- function(omics_type){
 
-  acceptable_types <- c("DNAm", "Proteomics", "Metabolomics")
+  acceptable_types <- c("DNAm", "Proteomics", "Metabolomics", "other")
 
   if (!omics_type %in% acceptable_types) {
     stop(
