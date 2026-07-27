@@ -16,7 +16,7 @@ genetic_pcs_path <- path.expand("~/CALERIE/data/Proteomics/CALERIE_GeneticPCs_20
 
 pipeline_repo <- path.expand("~/CALERIE/repos/track-1.1.1-single-analyte")
 
-omics_type <- "Proteomics"
+omics_type <- "other"
 clock_omics_csv <- file.path(data_dir, "omics_Proteomic_Clock.csv")
 results_path <- file.path(out_dir, "results_Proteomic_Clock.rds")
 reports_path <- file.path(out_dir, "reports_Proteomic_Clock.rds")

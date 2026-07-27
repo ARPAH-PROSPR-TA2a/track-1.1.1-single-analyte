@@ -78,7 +78,7 @@ cell_pcs_path <- path.expand("~/CALERIE/DNAm/data/covariate/Cell_PCs.csv")
 pipeline_repo <- path.expand("~/CALERIE/repos/1.1.1/track-1.1.1-single-analyte")
 out_dir <- path.expand("~/CALERIE/DNAm/TreatmentWAS/EpigeneticClocks")
 
-omics_type <- "DNAm"
+omics_type <- "other"
 n_cores <- 3
 results_path <- file.path(out_dir, "results.rds")
 reports_path <- file.path(out_dir, "reports.rds")
