@@ -63,6 +63,7 @@ Character string indicating the data type. Controls validation messaging and DNA
 - `"Proteomics"` (default)
 - `"Metabolomics"`
 - `"DNAm"` — triggers loading of probe lists from `Data/` and an additional filtered BH correction column in results
+- `"other"` — accepts non-omics feature data without a preprocessing reminder or type-specific filtering
 
 ---
 
