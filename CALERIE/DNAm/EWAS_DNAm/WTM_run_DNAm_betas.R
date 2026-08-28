@@ -15,7 +15,7 @@ pipeline_repo <- path.expand("~/FAST/GitHub/track-1.1.1")
 out_dir <- path.expand("~/FAST/Outputs/1.1.1")
 
 omics_type <- "DNAm"
-n_cores <- 1
+n_cores <- 15
 checkpoint_batch_size <- 2000L
 
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
