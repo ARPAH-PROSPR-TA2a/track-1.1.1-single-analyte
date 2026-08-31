@@ -45,7 +45,8 @@ results <- FAST_omics_WAS(
   omics_type = "Proteomics",
   additional_covariates = c("age", "bmi"),
   n_cores = 8,
-  checkpoint_dir = "checkpoints"
+  checkpoint_dir = "checkpoints",
+  verbose = TRUE
 )
 
 # View analysis results
@@ -60,7 +61,8 @@ reports <- FAST_omics_WAS_reports(
   pheno  = pheno,
   omics  = omics,
   omics_type = "Proteomics",
-  additional_covariates = c("age", "bmi")
+  additional_covariates = c("age", "bmi"),
+  verbose = TRUE
 )
 
 reports$all$pheno_summary
@@ -95,6 +97,10 @@ reports$all$omics_summary
 -   **`checkpoint_batch_size`** (integer): Number of analytes per
     checkpoint batch. Default: `2000`. Only relevant when
     `checkpoint_dir` is set.
+-   **`verbose`** (logical): Emit `[1.1.1]` progress messages for serial
+    preparation, the configured parallel backend and effective worker count,
+    cached versus pending batches, computed-batch timing and observed worker
+    PIDs, multiple-testing correction, and report stages. Default: `FALSE`.
 
 ### Return Value
 
@@ -125,9 +131,10 @@ assessing significance under different multiple-testing burdens).
 ## FAST_omics_WAS_reports()
 
 Generates QC and data summary reports. Takes the same `pheno`, `omics`,
-`omics_type`, and `additional_covariates` arguments as `FAST_omics_WAS()`
-and runs the same input validation, but only produces reports — no model
-fitting.
+`omics_type`, and `additional_covariates` arguments as `FAST_omics_WAS()`,
+plus `verbose`, and runs the same input validation, but only produces reports
+— no model fitting. With `verbose = TRUE`, long serial per-analyte report
+steps emit coarse progress milestones.
 
 Separating reports from analysis allows long-running analyses to be
 parallelized and checkpointed without re-running reporting, and vice versa.

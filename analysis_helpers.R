@@ -83,7 +83,8 @@
 
 
 .perform_lm_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL, response_type = c("change", "level"),
-                                 checkpoint_dir = NULL, checkpoint_batch_size = 2000L) {
+                                 checkpoint_dir = NULL, checkpoint_batch_size = 2000L,
+                                 verbose = FALSE, progress_label = response_type) {
 
     # Linear regression for single follow-up timepoint only
     # Extracts ALL fixed effect coefficients (treatment, covariates)
@@ -141,8 +142,29 @@
                      ceiling(seq_along(analyte_names) / checkpoint_batch_size))
     coefficient_batches <- vector("list", length(batches))
     treatment_batches <- vector("list", length(batches))
+    checkpoint_files <- if (!is.null(checkpoint_dir)) {
+      file.path(checkpoint_dir, paste0("batch_", seq_along(batches), ".rds"))
+    } else {
+      character(0)
+    }
+    n_cached <- sum(file.exists(checkpoint_files))
+    new_failures <- 0L
+    reported_worker_pids <- FALSE
+
+    .log_111(
+      verbose,
+      paste0(
+        progress_label, ": ", length(analyte_names), " analytes, ",
+        length(batches), " batches (", n_cached, " cached, ",
+        length(batches) - n_cached, " pending)"
+      )
+    )
+    if (n_cached == length(batches)) {
+      .log_111(verbose, paste0(progress_label, ": all batches cached; no workers launched"))
+    }
 
     for (b in seq_along(batches)) {
+      batch_started <- proc.time()[["elapsed"]]
       batch <- batches[[b]]
       batch_file <- if (!is.null(checkpoint_dir)) file.path(checkpoint_dir, paste0("batch_", b, ".rds")) else NULL
 
@@ -168,6 +190,15 @@
           cut(seq_along(batch_items), breaks = n_workers, labels = FALSE)
         )
       }
+
+      .log_111(
+        verbose,
+        sprintf(
+          "%s batch %d/%d: dispatching %d analytes across %d worker chunk%s",
+          progress_label, b, length(batches), length(batch), n_workers,
+          if (n_workers == 1L) "" else "s"
+        )
+      )
 
       chunk_results <- furrr::future_map(worker_chunks, function(items) {
         analyte_results <- lapply(items, function(item) {
@@ -217,8 +248,34 @@
           })
         })
 
-        .combine_analysis_results(analyte_results)
+        combined <- .combine_analysis_results(analyte_results)
+        combined$worker_pid <- Sys.getpid()
+        combined$n_failed <- sum(vapply(analyte_results, is.null, logical(1)))
+        combined
       }, .options = furrr::furrr_options(seed = TRUE))
+
+      worker_pids <- sort(unique(vapply(
+        chunk_results,
+        function(result) result$worker_pid,
+        integer(1)
+      )))
+      batch_failures <- sum(vapply(
+        chunk_results,
+        function(result) result$n_failed,
+        integer(1)
+      ))
+      new_failures <- new_failures + batch_failures
+
+      if (!reported_worker_pids) {
+        .log_111(
+          verbose,
+          paste0(
+            progress_label, " worker PIDs observed: ",
+            paste(worker_pids, collapse = ", ")
+          )
+        )
+        reported_worker_pids <- TRUE
+      }
 
       batch_payload <- .combine_analysis_results(chunk_results)
 
@@ -230,8 +287,26 @@
       coefficient_batches[[b]] <- batch_payload$coefficients
       treatment_batches[[b]] <- batch_payload$treatment_effects
 
+      .log_111(
+        verbose,
+        sprintf(
+          "%s batch %d/%d complete: %d worker PID%s, %d failure%s, %.1f sec",
+          progress_label, b, length(batches), length(worker_pids),
+          if (length(worker_pids) == 1L) "" else "s",
+          batch_failures, if (batch_failures == 1L) "" else "s",
+          proc.time()[["elapsed"]] - batch_started
+        )
+      )
+
       rm(batch_items, worker_chunks, chunk_results, batch_payload)
       invisible(gc())
+    }
+
+    if (new_failures > 0L) {
+      .log_111(
+        verbose,
+        paste0(progress_label, ": ", new_failures, " newly attempted analytes failed")
+      )
     }
 
     coefficients <- .bind_rows_or_null(coefficient_batches)
@@ -249,7 +324,8 @@
 
 
 .perform_lme4_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL, response_type = c("change", "level"),
-                                   checkpoint_dir = NULL, checkpoint_batch_size = 2000L) {
+                                   checkpoint_dir = NULL, checkpoint_batch_size = 2000L,
+                                   verbose = FALSE, progress_label = response_type) {
 
     require(lme4)
     require(lmerTest)
@@ -298,8 +374,29 @@
                      ceiling(seq_along(analyte_names) / checkpoint_batch_size))
     coefficient_batches <- vector("list", length(batches))
     treatment_batches <- vector("list", length(batches))
+    checkpoint_files <- if (!is.null(checkpoint_dir)) {
+      file.path(checkpoint_dir, paste0("batch_", seq_along(batches), ".rds"))
+    } else {
+      character(0)
+    }
+    n_cached <- sum(file.exists(checkpoint_files))
+    new_failures <- 0L
+    reported_worker_pids <- FALSE
+
+    .log_111(
+      verbose,
+      paste0(
+        progress_label, ": ", length(analyte_names), " analytes, ",
+        length(batches), " batches (", n_cached, " cached, ",
+        length(batches) - n_cached, " pending)"
+      )
+    )
+    if (n_cached == length(batches)) {
+      .log_111(verbose, paste0(progress_label, ": all batches cached; no workers launched"))
+    }
 
     for (b in seq_along(batches)) {
+      batch_started <- proc.time()[["elapsed"]]
       batch <- batches[[b]]
       batch_file <- if (!is.null(checkpoint_dir)) file.path(checkpoint_dir, paste0("batch_", b, ".rds")) else NULL
 
@@ -325,6 +422,15 @@
           cut(seq_along(batch_items), breaks = n_workers, labels = FALSE)
         )
       }
+
+      .log_111(
+        verbose,
+        sprintf(
+          "%s batch %d/%d: dispatching %d analytes across %d worker chunk%s",
+          progress_label, b, length(batches), length(batch), n_workers,
+          if (n_workers == 1L) "" else "s"
+        )
+      )
 
       chunk_results <- furrr::future_map(worker_chunks, function(items) {
         analyte_results <- lapply(items, function(item) {
@@ -377,8 +483,34 @@
           })
         })
 
-        .combine_analysis_results(analyte_results)
+        combined <- .combine_analysis_results(analyte_results)
+        combined$worker_pid <- Sys.getpid()
+        combined$n_failed <- sum(vapply(analyte_results, is.null, logical(1)))
+        combined
       }, .options = furrr::furrr_options(seed = TRUE, packages = c("lme4", "lmerTest", "emmeans")))
+
+      worker_pids <- sort(unique(vapply(
+        chunk_results,
+        function(result) result$worker_pid,
+        integer(1)
+      )))
+      batch_failures <- sum(vapply(
+        chunk_results,
+        function(result) result$n_failed,
+        integer(1)
+      ))
+      new_failures <- new_failures + batch_failures
+
+      if (!reported_worker_pids) {
+        .log_111(
+          verbose,
+          paste0(
+            progress_label, " worker PIDs observed: ",
+            paste(worker_pids, collapse = ", ")
+          )
+        )
+        reported_worker_pids <- TRUE
+      }
 
       batch_payload <- .combine_analysis_results(chunk_results)
 
@@ -390,8 +522,26 @@
       coefficient_batches[[b]] <- batch_payload$coefficients
       treatment_batches[[b]] <- batch_payload$treatment_effects
 
+      .log_111(
+        verbose,
+        sprintf(
+          "%s batch %d/%d complete: %d worker PID%s, %d failure%s, %.1f sec",
+          progress_label, b, length(batches), length(worker_pids),
+          if (length(worker_pids) == 1L) "" else "s",
+          batch_failures, if (batch_failures == 1L) "" else "s",
+          proc.time()[["elapsed"]] - batch_started
+        )
+      )
+
       rm(batch_items, worker_chunks, chunk_results, batch_payload)
       invisible(gc())
+    }
+
+    if (new_failures > 0L) {
+      .log_111(
+        verbose,
+        paste0(progress_label, ": ", new_failures, " newly attempted analytes failed")
+      )
     }
 
     coefficients <- .bind_rows_or_null(coefficient_batches)
@@ -409,7 +559,8 @@
 
 
 .perform_analysis <- function(pheno_df, omics_df, omics_type, mixed_effects, additional_covariates = NULL, response_type = c("change", "level"),
-                              checkpoint_dir = NULL, checkpoint_batch_size = 2000L) {
+                              checkpoint_dir = NULL, checkpoint_batch_size = 2000L,
+                              verbose = FALSE, progress_label = response_type) {
 
   pheno_baseline <- pheno_df[pheno_df$FU == 0, ]
   baseline_sample_ids <- pheno_baseline$SAMPLE_ID
@@ -420,12 +571,39 @@
 
   max_fu <- max(as.numeric(as.character(pheno_analysis$FU)), na.rm = TRUE)
   if (max_fu == 1) {
-    results <- .perform_lm_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates, response_type, checkpoint_dir, checkpoint_batch_size)
+    results <- .perform_lm_analysis(
+      pheno_analysis,
+      omics_analysis,
+      pheno_baseline,
+      omics_baseline,
+      additional_covariates,
+      response_type,
+      checkpoint_dir,
+      checkpoint_batch_size,
+      verbose = verbose,
+      progress_label = progress_label
+    )
   } else {
-    results <- .perform_lme4_analysis(pheno_analysis, omics_analysis, pheno_baseline, omics_baseline, additional_covariates, response_type, checkpoint_dir, checkpoint_batch_size)
+    results <- .perform_lme4_analysis(
+      pheno_analysis,
+      omics_analysis,
+      pheno_baseline,
+      omics_baseline,
+      additional_covariates,
+      response_type,
+      checkpoint_dir,
+      checkpoint_batch_size,
+      verbose = verbose,
+      progress_label = progress_label
+    )
   }
 
   if (!is.null(results)) {
+    .log_111(
+      verbose,
+      paste0(progress_label, ": model batches complete; applying BH correction (serial)")
+    )
+
     if (!is.null(results$coefficients) && nrow(results$coefficients) > 0) {
       results$coefficients <- .apply_multiple_testing_correction(
         results$coefficients, group_col = "COEFFICIENT"
@@ -492,7 +670,8 @@
 .run_stratified_analysis <- function(pheno_list, omics_list, omics_type,
                                      additional_covariates, response_type = c("change", "level"),
                                      filtered_probes = NULL,
-                                     checkpoint_dir = NULL, checkpoint_batch_size = 2000L) {
+                                     checkpoint_dir = NULL, checkpoint_batch_size = 2000L,
+                                     verbose = FALSE) {
 
   response_type <- match.arg(response_type)
 
@@ -501,6 +680,8 @@
   for (dataset in c("all", "male", "female")) {
 
     if (is.null(pheno_list[[dataset]])) next
+    stratum_started <- proc.time()[["elapsed"]]
+    progress_label <- paste(response_type, dataset, sep = "/")
 
     stratum_checkpoint_dir <- if (!is.null(checkpoint_dir)) {
       file.path(checkpoint_dir, response_type, dataset)
@@ -514,16 +695,31 @@
       additional_covariates,
       response_type,
       stratum_checkpoint_dir,
-      checkpoint_batch_size
+      checkpoint_batch_size,
+      verbose = verbose,
+      progress_label = progress_label
     )
 
     outputs[[dataset]] <- list(
       coefficients      = analysis_results$coefficients,
       treatment_effects = analysis_results$treatment_effects
     )
+
+    .log_111(
+      verbose,
+      sprintf(
+        "%s complete (%.1f sec)",
+        progress_label,
+        proc.time()[["elapsed"]] - stratum_started
+      )
+    )
   }
 
   if (!is.null(filtered_probes)) {
+    .log_111(
+      verbose,
+      paste0(response_type, ": applying filtered-probe BH correction (serial)")
+    )
     outputs <- .add_filtered_bh_correction(outputs, filtered_probes)
   }
 

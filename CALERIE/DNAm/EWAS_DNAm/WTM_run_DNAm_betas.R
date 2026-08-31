@@ -20,18 +20,39 @@ checkpoint_batch_size <- 2000L
 
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 log_file <- file.path(out_dir, "run_full_DNAm.log")
+options(track111.progress_log = log_file)
 
-cat("START run: ", as.character(Sys.time()), "\n",
-    file = log_file, append = TRUE, sep = "")
+log_status <- function(text) {
+  line <- paste0(
+    "[1.1.1] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+    " | ", text
+  )
+  message(line)
+  cat(line, "\n", file = log_file, append = TRUE, sep = "")
+}
+
+run_started <- proc.time()[["elapsed"]]
+log_status("run starting")
 
 # -----------------------------
 # Read inputs
 # -----------------------------
+input_started <- proc.time()[["elapsed"]]
+log_status("loading raw inputs (serial)")
 omics_raw <- readRDS(omics_raw_path)
 pheno_raw <- readRDS(pheno_raw_path)
 control_pc <- read.csv(control_pc_path, stringsAsFactors = FALSE)
 cell_count <- read.csv(cell_count_path, stringsAsFactors = FALSE)
 cell_PCs <- read_csv(cell_pcs_path, show_col_types = FALSE)
+log_status(
+  paste0(
+    "raw inputs loaded: ", nrow(omics_raw), " omics rows, ",
+    nrow(pheno_raw), " phenotype rows (",
+    round(proc.time()[["elapsed"]] - input_started, 1), " sec)"
+  )
+)
+preparation_started <- proc.time()[["elapsed"]]
+log_status("input QC and table preparation starting (serial)")
 
 # -----------------------------
 # Input QC
@@ -145,9 +166,24 @@ stopifnot(
   exists("generate_all_plots") || file.exists(file.path(pipeline_repo, "plotting_helpers.R"))
 )
 
+log_status(
+  paste0(
+    "inputs ready: ", nrow(omics), " analytes, ",
+    nrow(pheno), " matched phenotype rows (",
+    round(proc.time()[["elapsed"]] - preparation_started, 1), " sec)"
+  )
+)
+
 # -----------------------------
 # Analysis
 # -----------------------------
+log_status(
+  paste0(
+    "analysis call starting: n_cores=", n_cores,
+    ", checkpoint batch size=", checkpoint_batch_size,
+    "; parallel work occurs inside uncached batches"
+  )
+)
 results <- FAST_omics_WAS(
   pheno = pheno,
   omics = omics,
@@ -155,7 +191,8 @@ results <- FAST_omics_WAS(
   additional_covariates = covariates,
   n_cores = n_cores,
   checkpoint_dir = file.path(out_dir, "checkpoints"),
-  checkpoint_batch_size = checkpoint_batch_size
+  checkpoint_batch_size = checkpoint_batch_size,
+  verbose = TRUE
 )
 
 saveRDS(
@@ -163,20 +200,19 @@ saveRDS(
   file = file.path(out_dir, "DNAm_betas_1.1.1.rds")
 )
 
-cat("DONE analysis: ", as.character(Sys.time()), "\n",
-    file = log_file, append = TRUE, sep = "")
+log_status("analysis complete; results saved")
 
 # -----------------------------
 # Reports
 # -----------------------------
-cat("START report run: ", as.character(Sys.time()), "\n",
-    file = log_file, append = TRUE, sep = "")
+log_status("reports starting (serial)")
 
 reports <- FAST_omics_WAS_reports(
   pheno = pheno,
   omics = omics,
   omics_type = omics_type,
-  additional_covariates = covariates
+  additional_covariates = covariates,
+  verbose = TRUE
 )
 
 saveRDS(
@@ -184,8 +220,7 @@ saveRDS(
   file = file.path(out_dir, "reports_full_DNAm.rds")
 )
 
-cat("DONE reports: ", as.character(Sys.time()), "\n",
-    file = log_file, append = TRUE, sep = "")
+log_status("reports complete; report output saved")
 
 # -----------------------------
 # Plotting
@@ -198,14 +233,25 @@ fig_level <- file.path(out_dir, "Figures", "level")
 dir.create(fig_change, recursive = TRUE, showWarnings = FALSE)
 dir.create(fig_level, recursive = TRUE, showWarnings = FALSE)
 
+log_status("change-result plotting starting (serial)")
 generate_all_plots(
   results,
   figures_dir = fig_change,
   analysis = "analysis_change"
 )
+log_status("change-result plotting complete")
 
+log_status("level-result plotting starting (serial)")
 generate_all_plots(
   results,
   figures_dir = fig_level,
   analysis = "analysis_level"
+)
+log_status("level-result plotting complete")
+log_status(
+  paste0(
+    "run complete (",
+    round(proc.time()[["elapsed"]] - run_started, 1),
+    " sec)"
+  )
 )

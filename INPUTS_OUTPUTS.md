@@ -111,6 +111,12 @@ Integer. Number of analytes per checkpoint batch. Default: `2000`. Only relevant
 
 ---
 
+### `verbose`
+
+Logical. Default: `FALSE`. When `TRUE`, analysis and reporting emit `[1.1.1]` progress messages. Analysis messages distinguish serial preparation and correction from computed parallel batches, report configured and observed workers, and summarize cached versus pending checkpoints. Reporting messages identify serial stages and emit coarse per-analyte milestones.
+
+---
+
 ## Outputs
 
 ### `FAST_omics_WAS()`

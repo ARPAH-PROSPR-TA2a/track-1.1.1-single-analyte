@@ -32,7 +32,9 @@
 }
 
 
-.create_omics_data_report <- function(sample_ids, omics_df) {
+.create_omics_data_report <- function(sample_ids, omics_df, verbose = FALSE,
+                                      progress_label = "reports variable summary",
+                                      progress_every = 100000L) {
 
   analyte_names <- omics_df$ANALYTE_NAME
 
@@ -50,6 +52,11 @@
     MAX = NA_real_,
     stringsAsFactors = FALSE
   )
+
+  .log_111(
+    verbose,
+    paste0(progress_label, ": 0/", length(analyte_names), " analytes (serial)")
+  )
   
   # Calculate per-analyte statistics
   for (i in seq_along(analyte_names)) {
@@ -61,6 +68,13 @@
     report$SD[i] <- sd(analyte_values, na.rm = TRUE)
     report$MIN[i] <- min(analyte_values, na.rm = TRUE)
     report$MAX[i] <- max(analyte_values, na.rm = TRUE)
+
+    if (i %% progress_every == 0L || i == length(analyte_names)) {
+      .log_111(
+        verbose,
+        paste0(progress_label, ": ", i, "/", length(analyte_names), " analytes")
+      )
+    }
   }
   
   return(report)
@@ -259,7 +273,8 @@
 }
 
 
-.create_randomization_report <- function(pheno_df, omics_df) {
+.create_randomization_report <- function(pheno_df, omics_df, verbose = FALSE,
+                                         progress_every = 100000L) {
 
   # Filter to baseline (FU=0)
   pheno_baseline <- pheno_df[pheno_df$FU == 0, ]
@@ -280,6 +295,10 @@
 
   # T-test per analyte
   analyte_names <- omics_df$ANALYTE_NAME
+  .log_111(
+    verbose,
+    paste0("reports randomization: 0/", length(analyte_names), " analytes (serial)")
+  )
 
   for (i in seq_along(analyte_names)) {
     tryCatch({
@@ -335,6 +354,13 @@
     }, error = function(e) {
       warning("Error processing analyte '", analyte_names[i], "': ", e$message)
     })
+
+    if (i %% progress_every == 0L || i == length(analyte_names)) {
+      .log_111(
+        verbose,
+        paste0("reports randomization: ", i, "/", length(analyte_names), " analytes")
+      )
+    }
   }
 
   # Apply multiple testing correction (global across all analytes)
@@ -347,13 +373,19 @@
 }
 
 
-.generate_reports <- function(pheno_list, omics_list, additional_covariates = NULL) {
+.generate_reports <- function(pheno_list, omics_list, additional_covariates = NULL,
+                              verbose = FALSE) {
 
   # --- Variable summaries: per stratum, per FU x TREATMENT_GROUP cell ---
   variable_summaries <- list(all = NULL, male = NULL, female = NULL)
 
   for (dataset in c("all", "male", "female")) {
     if (is.null(pheno_list[[dataset]])) next
+
+    .log_111(
+      verbose,
+      paste0("reports variable summaries/", dataset, " starting (serial)")
+    )
 
     pheno_df <- pheno_list[[dataset]]
     omics_df <- omics_list[[dataset]]
@@ -372,8 +404,14 @@
 
         if (nrow(cell_pheno) == 0) next
 
-        cell_reports[[paste0("omics", cell_key)]] <-
-          .create_omics_data_report(cell_pheno$SAMPLE_ID, omics_df)
+        cell_reports[[paste0("omics", cell_key)]] <- .create_omics_data_report(
+          cell_pheno$SAMPLE_ID,
+          omics_df,
+          verbose = verbose,
+          progress_label = paste0(
+            "reports variable summaries/", dataset, " FU", fu, " Tx", tx
+          )
+        )
 
         if (!is.null(additional_covariates)) {
           cell_reports[[paste0("covariates", cell_key)]] <-
@@ -383,15 +421,27 @@
     }
 
     variable_summaries[[dataset]] <- cell_reports
+    .log_111(verbose, paste0("reports variable summaries/", dataset, " complete"))
   }
 
   # --- Randomization reports: study-level, not sex-stratified ---
+  omics_randomization_report <- .create_randomization_report(
+    pheno_list$all,
+    omics_list$all,
+    verbose = verbose
+  )
+  .log_111(verbose, "reports covariate randomization summary (serial)")
+  covariate_randomization_report <- .create_pheno_randomization_report(
+    pheno_list$all,
+    additional_covariates
+  )
   randomization_reports <- list(
-    omics_report     = .create_randomization_report(pheno_list$all, omics_list$all),
-    covariate_report = .create_pheno_randomization_report(pheno_list$all, additional_covariates)
+    omics_report     = omics_randomization_report,
+    covariate_report = covariate_randomization_report
   )
 
   # --- Pheno summary: study-level ---
+  .log_111(verbose, "reports phenotype summary (serial)")
   pheno_summary <- .create_pheno_data_report(pheno_list$all)
 
   return(list(
