@@ -16,9 +16,58 @@
   invisible(NULL)
 }
 
-source("validation_helpers.R")
-source("reporting_helpers.R")
-source("analysis_helpers.R")
+# Capture the repository containing main.R while it is being sourced. CALERIE
+# runners use chdir = TRUE, but source() restores the caller's working directory
+# before FAST_omics_WAS() is invoked.
+.track111_root <- local({
+  frames <- sys.frames()
+  source_indices <- which(vapply(
+    frames,
+    function(frame) !is.null(frame$ofile),
+    logical(1)
+  ))
+
+  if (length(source_indices) == 0L) {
+    normalizePath(getwd(), winslash = "/", mustWork = TRUE)
+  } else {
+    source_frame <- frames[[tail(source_indices, 1L)]]
+    root <- if (isTRUE(source_frame$chdir)) {
+      getwd()
+    } else {
+      dirname(normalizePath(source_frame$ofile, mustWork = TRUE))
+    }
+    normalizePath(root, winslash = "/", mustWork = TRUE)
+  }
+})
+
+.load_dnam_probe_lists <- function(root = .track111_root) {
+  probe_paths <- c(
+    full = file.path(root, "Data", "FAST_epicv1_epicv2_probe_list.rds"),
+    filtered = file.path(
+      root,
+      "Data",
+      "FAST_epicv1_epicv2_sugden_TruD_probe_list.rds"
+    )
+  )
+
+  missing_paths <- probe_paths[!file.exists(probe_paths)]
+  if (length(missing_paths) > 0L) {
+    stop(
+      "Required DNAm probe-list file(s) not found:\n",
+      paste0("  - ", missing_paths, collapse = "\n"),
+      call. = FALSE
+    )
+  }
+
+  list(
+    full = readRDS(unname(probe_paths[["full"]])),
+    filtered = readRDS(unname(probe_paths[["filtered"]]))
+  )
+}
+
+source(file.path(.track111_root, "validation_helpers.R"))
+source(file.path(.track111_root, "reporting_helpers.R"))
+source(file.path(.track111_root, "analysis_helpers.R"))
 
 FAST_omics_WAS <- function(pheno,
                            omics,
@@ -61,13 +110,19 @@ FAST_omics_WAS <- function(pheno,
   .log_111(verbose, "analysis validating inputs and preparing data (serial)")
   .validate_omics_type(omics_type)
 
+  dnam_probes <- NULL
+  if (omics_type == "DNAm") {
+    .log_111(verbose, "loading bundled DNAm probe lists (serial)")
+    dnam_probes <- .load_dnam_probe_lists()
+  }
+
   pheno_list <- .validate_pheno(pheno, additional_covariates)
-  omics_list <- .validate_omics(omics, pheno_list)
+  omics_list <- .validate_omics(omics, pheno_list, verbose = verbose)
 
   filtered_probes <- NULL
   if (omics_type == "DNAm") {
-    full_probes     <- readRDS("Data/FAST_epicv1_epicv2_probe_list.rds")
-    filtered_probes <- readRDS("Data/FAST_epicv1_epicv2_sugden_TruD_probe_list.rds")
+    full_probes <- dnam_probes$full
+    filtered_probes <- dnam_probes$filtered
     .validate_dnam_probe_coverage(full_probes, filtered_probes, omics_list$all$ANALYTE_NAME)
     omics_list <- .subset_omics_list(omics_list, full_probes)
   }
@@ -120,12 +175,18 @@ FAST_omics_WAS_reports <- function(pheno,
 
   .validate_omics_type(omics_type)
 
+  dnam_probes <- NULL
+  if (omics_type == "DNAm") {
+    .log_111(verbose, "loading bundled DNAm probe lists (serial)")
+    dnam_probes <- .load_dnam_probe_lists()
+  }
+
   pheno_list <- .validate_pheno(pheno, additional_covariates)
-  omics_list <- .validate_omics(omics, pheno_list)
+  omics_list <- .validate_omics(omics, pheno_list, verbose = verbose)
 
   if (omics_type == "DNAm") {
-    full_probes     <- readRDS("Data/FAST_epicv1_epicv2_probe_list.rds")
-    filtered_probes <- readRDS("Data/FAST_epicv1_epicv2_sugden_TruD_probe_list.rds")
+    full_probes <- dnam_probes$full
+    filtered_probes <- dnam_probes$filtered
     .validate_dnam_probe_coverage(full_probes, filtered_probes, omics_list$all$ANALYTE_NAME)
     omics_list <- .subset_omics_list(omics_list, full_probes)
   }

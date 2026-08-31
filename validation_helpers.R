@@ -199,7 +199,10 @@
 }
 
 
-.validate_omics <- function(omics, pheno_list) {
+.validate_omics <- function(omics,
+                            pheno_list,
+                            verbose = FALSE,
+                            progress_every = 100000L) {
   
   # Step 1: Input validation and conversion
   if (is.matrix(omics)) {
@@ -243,6 +246,13 @@
   # Step 5: Quality checks
   n_with_na <- 0
   n_with_nzv <- 0
+  n_analytes <- length(analyte_names)
+  quality_check_started <- proc.time()[["elapsed"]]
+
+  .log_111(
+    verbose,
+    paste0("omics quality checks: 0/", n_analytes, " analytes (serial)")
+  )
   
   for (i in seq_along(analyte_names)) {
     analyte_data <- as.numeric(omics_numeric[i, ])
@@ -254,7 +264,35 @@
     if (.is_near_zero_variance(analyte_data)) {
       n_with_nzv <- n_with_nzv + 1
     }
+
+    if (i < n_analytes && i %% progress_every == 0L) {
+      .log_111(
+        verbose,
+        sprintf(
+          "omics quality checks: %d/%d analytes (%.1f%%; %.1f sec)",
+          i,
+          n_analytes,
+          100 * i / n_analytes,
+          proc.time()[["elapsed"]] - quality_check_started
+        )
+      )
+    }
   }
+
+  .log_111(
+    verbose,
+    sprintf(
+      paste0(
+        "omics quality checks: %d/%d analytes complete ",
+        "(%d with NA, %d near-zero variance; %.1f sec)"
+      ),
+      n_analytes,
+      n_analytes,
+      n_with_na,
+      n_with_nzv,
+      proc.time()[["elapsed"]] - quality_check_started
+    )
+  )
   
   # Summmarize analyte NA/NZVs
   if (n_with_na > 0) {

@@ -98,6 +98,7 @@ reports$all$omics_summary
     checkpoint batch. Default: `2000`. Only relevant when
     `checkpoint_dir` is set.
 -   **`verbose`** (logical): Emit `[1.1.1]` progress messages for serial
+    input quality checks (every 100,000 analytes),
     preparation, the configured parallel backend and effective worker count,
     cached versus pending batches, computed-batch timing and observed worker
     PIDs, multiple-testing correction, and report stages. Default: `FALSE`.
