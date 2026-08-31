@@ -33,7 +33,6 @@ validation_helpers.R          # Input validation and data subsetting
 analysis_helpers.R            # Statistical analysis (lm / lmerTest), parallelization, checkpointing
 reporting_helpers.R           # QC and summary report generation
 plotting_helpers.R            # QQ + volcano plotting from treatment_effects
-test_omics_type.R             # omics_type allowlist and silent "other" regression test
 test_comprehensive.R          # Functional test suite (2x2 scenario matrix)
 test_parallel_checkpoint.R    # Parallelization and checkpointing tests
 ```

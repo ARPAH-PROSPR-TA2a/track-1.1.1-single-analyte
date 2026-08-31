@@ -2,6 +2,7 @@ Figures/
 PracticeData/
 PracticeData.zip
 test_WTM.R
+test_omics_type.R
 *.html
 .Rhistory
 usersguide.pdf
