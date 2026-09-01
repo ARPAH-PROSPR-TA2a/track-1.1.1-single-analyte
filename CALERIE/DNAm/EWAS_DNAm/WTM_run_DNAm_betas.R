@@ -1,3 +1,10 @@
+Sys.setenv(
+  OMP_NUM_THREADS = "1",
+  OPENBLAS_NUM_THREADS = "1",
+  MKL_NUM_THREADS = "1",
+  VECLIB_MAXIMUM_THREADS = "1"
+)
+
 library(dplyr)
 library(forcats)
 library(readr)
@@ -13,9 +20,10 @@ cell_pcs_path <- path.expand("~/FAST/Data/CALERIE/Raw/DNAm/Cell_PCs.csv")
 
 pipeline_repo <- path.expand("~/FAST/GitHub/track-1.1.1")
 out_dir <- path.expand("~/FAST/Outputs/1.1.1")
+dunedinpace_dir <- file.path(out_dir, "dunedinpace_raw_beta_jackknife_v1")
 
 omics_type <- "DNAm"
-n_cores <- 15
+n_cores <- 31
 checkpoint_batch_size <- 2000L
 
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
@@ -33,6 +41,10 @@ log_status <- function(text) {
 
 run_started <- proc.time()[["elapsed"]]
 log_status("run starting")
+log_status(paste0(
+  "parallel configuration: n_cores=", n_cores,
+  "; BLAS/OpenMP threads per process=1"
+))
 
 # -----------------------------
 # Read inputs
@@ -159,10 +171,15 @@ stopifnot(all(pheno$SAMPLE_ID %in% colnames(omics)))
 # Load pipeline functions
 # -----------------------------
 source(file.path(pipeline_repo, "main.R"), chdir = TRUE)
+source(file.path(
+  pipeline_repo, "CALERIE", "DNAm", "EWAS_DNAm",
+  "dunedinpace_covariance.R"
+))
 
 stopifnot(
   exists("FAST_omics_WAS"),
   exists("FAST_omics_WAS_reports"),
+  exists("run_dunedinpace_covariance"),
   exists("generate_all_plots") || file.exists(file.path(pipeline_repo, "plotting_helpers.R"))
 )
 
@@ -173,6 +190,20 @@ log_status(
     round(proc.time()[["elapsed"]] - preparation_started, 1), " sec)"
   )
 )
+
+# -----------------------------
+# DunedinPACE covariance
+# -----------------------------
+log_status("DunedinPACE covariance stage starting")
+invisible(run_dunedinpace_covariance(
+  pheno = pheno,
+  omics = omics,
+  additional_covariates = covariates,
+  output_dir = dunedinpace_dir,
+  n_cores = n_cores,
+  log = log_status
+))
+log_status("DunedinPACE covariance stage complete")
 
 # -----------------------------
 # Analysis
