@@ -23,7 +23,7 @@ out_dir <- path.expand("~/FAST/Outputs/1.1.1")
 dunedinpace_dir <- file.path(out_dir, "dunedinpace_raw_beta_jackknife_v1")
 
 omics_type <- "DNAm"
-n_cores <- 31
+n_cores <- 47
 checkpoint_batch_size <- 2000L
 
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
