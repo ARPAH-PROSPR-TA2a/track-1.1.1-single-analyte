@@ -20,12 +20,6 @@ Sys.setenv(
 # replacement. Validate it against dunedinpace_raw_beta_jackknife_v1 before
 # extending it genome-wide.
 
-suppressPackageStartupMessages({
-  library(dplyr)
-  library(forcats)
-  library(readr)
-})
-
 .residualized_component <- function(change, baseline, treatment,
                                     nuisance_design) {
   values <- list(
@@ -90,25 +84,17 @@ run_dunedinpace_residualized_changes <- function(
     omics_raw_path,
     pheno_raw_path,
     control_pc_path,
-    cell_count_path,
     cell_pc_path,
-    pipeline_repo,
     output_dir,
     log = message) {
   started <- proc.time()[["elapsed"]]
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
-  required <- c("digest", "dplyr", "forcats", "haven", "readr")
-  missing <- required[
-    !vapply(required, requireNamespace, logical(1), quietly = TRUE)
-  ]
-  if (length(missing)) stop("Missing package(s): ", paste(missing, collapse = ", "))
 
   log("loading raw CALERIE DNAm inputs")
   omics_raw <- readRDS(omics_raw_path)
   pheno_raw <- readRDS(pheno_raw_path)
   control_pc <- read.csv(control_pc_path, stringsAsFactors = FALSE)
-  cell_count <- read.csv(cell_count_path, stringsAsFactors = FALSE)
-  cell_pcs <- readr::read_csv(cell_pc_path, show_col_types = FALSE)
+  cell_pcs <- read.csv(cell_pc_path, stringsAsFactors = FALSE)
 
   stopifnot(
     !anyDuplicated(rownames(omics_raw)),
@@ -116,55 +102,48 @@ run_dunedinpace_residualized_changes <- function(
     !anyNA(omics_raw),
     !anyDuplicated(pheno_raw$Barcode),
     !anyDuplicated(control_pc$filenames),
-    !anyDuplicated(cell_count$IDATid),
     !anyDuplicated(cell_pcs$SAMPLE_ID)
   )
 
-  pheno <- pheno_raw |>
-    dplyr::select(
-      Participant_ID, Time_Point, Barcode, fu, CR, deidsite, agebl, female,
-      bmistrat, snppc1.x, snppc2.x, snppc3.x
-    ) |>
-    dplyr::left_join(
-      cell_count |> dplyr::select(-dplyr::any_of("chunk")),
-      by = c("Barcode" = "IDATid")
-    ) |>
-    dplyr::left_join(
-      control_pc |> dplyr::select(filenames, paste0("PC", 1:20)),
-      by = c("Barcode" = "filenames")
-    ) |>
-    dplyr::group_by(Participant_ID, Time_Point) |>
-    dplyr::slice(1) |>
-    dplyr::ungroup() |>
-    dplyr::mutate(
-      agebl = as.numeric(scale(agebl)),
-      snppc1.x = as.numeric(scale(snppc1.x)),
-      snppc2.x = as.numeric(scale(snppc2.x)),
-      snppc3.x = as.numeric(scale(snppc3.x)),
-      fu = factor(haven::zap_labels(fu), levels = c(0, 1, 2)),
-      female = forcats::as_factor(female),
-      CR = forcats::as_factor(CR),
-      deidsite = forcats::as_factor(deidsite),
-      bmistrat = forcats::as_factor(bmistrat)
-    ) |>
-    dplyr::rename(
-      SAMPLE_ID = Barcode,
-      SUBJECT_ID = Participant_ID,
-      FU = fu,
-      FEMALE = female,
-      TREATMENT_GROUP = CR
-    ) |>
-    dplyr::select(
-      -Time_Point,
-      -dplyr::any_of(c(
-        "Bas", "Bmem", "Bnv", "CD4mem", "CD4nv", "CD8mem", "CD8nv",
-        "Eos", "Mono", "Neu", "NK", "Treg", paste0("PC", 4:20)
-      ))
-    ) |>
-    dplyr::left_join(
-      cell_pcs |> dplyr::select(SAMPLE_ID, dplyr::any_of(paste0("cell_PC", 1:4))),
-      by = "SAMPLE_ID"
-    )
+  pheno_columns <- c(
+    "Participant_ID", "Time_Point", "Barcode", "fu", "CR", "deidsite",
+    "agebl", "female", "bmistrat", "snppc1.x", "snppc2.x", "snppc3.x"
+  )
+  stopifnot(all(pheno_columns %in% names(pheno_raw)))
+  pheno <- pheno_raw[, pheno_columns, drop = FALSE]
+  pheno <- pheno[
+    !duplicated(paste(pheno$Participant_ID, pheno$Time_Point, sep = "\r")),
+    , drop = FALSE
+  ]
+
+  pc_columns <- paste0("PC", 1:3)
+  cell_pc_columns <- paste0("cell_PC", 1:4)
+  stopifnot(
+    all(pc_columns %in% names(control_pc)),
+    all(cell_pc_columns %in% names(cell_pcs))
+  )
+  pc_index <- match(pheno$Barcode, control_pc$filenames)
+  cell_pc_index <- match(pheno$Barcode, cell_pcs$SAMPLE_ID)
+  pheno[pc_columns] <- control_pc[pc_index, pc_columns, drop = FALSE]
+  pheno[cell_pc_columns] <- cell_pcs[
+    cell_pc_index, cell_pc_columns, drop = FALSE
+  ]
+
+  scaled_columns <- c("agebl", "snppc1.x", "snppc2.x", "snppc3.x")
+  pheno[scaled_columns] <- lapply(
+    pheno[scaled_columns], function(value) as.numeric(scale(as.numeric(value)))
+  )
+  as_base_factor <- function(value) {
+    if (is.numeric(value)) factor(as.numeric(value)) else factor(value)
+  }
+  pheno$fu <- factor(as.numeric(pheno$fu), levels = c(0, 1, 2))
+  pheno$female <- as_base_factor(pheno$female)
+  pheno$CR <- as_base_factor(pheno$CR)
+  pheno$deidsite <- as_base_factor(pheno$deidsite)
+  pheno$bmistrat <- as_base_factor(pheno$bmistrat)
+  names(pheno)[match(
+    c("Barcode", "Participant_ID", "fu", "female", "CR"), names(pheno)
+  )] <- c("SAMPLE_ID", "SUBJECT_ID", "FU", "FEMALE", "TREATMENT_GROUP")
 
   covariates <- c(
     "snppc1.x", "snppc2.x", "snppc3.x",
@@ -176,9 +155,11 @@ run_dunedinpace_residualized_changes <- function(
     covariates
   )
   stopifnot(all(required_pheno %in% names(pheno)))
-  pheno <- pheno |>
-    dplyr::filter(SAMPLE_ID %in% colnames(omics_raw)) |>
-    dplyr::filter(dplyr::if_all(dplyr::all_of(required_pheno), ~ !is.na(.x)))
+  pheno <- pheno[
+    pheno$SAMPLE_ID %in% colnames(omics_raw) &
+      complete.cases(pheno[, required_pheno, drop = FALSE]),
+    , drop = FALSE
+  ]
   stopifnot(nrow(pheno) > 0L, !anyDuplicated(pheno$SAMPLE_ID))
   fu_numeric <- as.integer(as.character(pheno$FU))
   complete_subjects <- intersect(
@@ -190,13 +171,24 @@ run_dunedinpace_residualized_changes <- function(
     stop("No subjects have both a retained baseline and follow-up")
   }
 
-  helper_path <- file.path(
-    pipeline_repo, "CALERIE", "DNAm", "EWAS_DNAm",
-    "dunedinpace_covariance.R"
-  )
-  source(helper_path, local = environment())
   weights_dir <- file.path(output_dir, "dunedinpace_raw_beta_jackknife_v1")
-  weight_table <- .dpace_weights(weights_dir, log)
+  weights_path <- file.path(weights_dir, "sysdata.rda")
+  if (!file.exists(weights_path)) {
+    stop("Pinned DunedinPACE weights not found: ", weights_path)
+  }
+  reference <- new.env(parent = emptyenv())
+  load(weights_path, envir = reference)
+  probes_all <- reference$mPACE_Models$model_probes$DunedinPACE
+  weights_all <- reference$mPACE_Models$model_weights$DunedinPACE
+  if (length(probes_all) != 173L || length(weights_all) != 173L ||
+      anyDuplicated(probes_all) || anyNA(weights_all)) {
+    stop("Pinned DunedinPACE weights have an unexpected structure")
+  }
+  weight_table <- data.frame(
+    ANALYTE_NAME = as.character(probes_all),
+    WEIGHT = as.numeric(weights_all),
+    stringsAsFactors = FALSE
+  )
   matched <- weight_table[
     weight_table$ANALYTE_NAME %in% rownames(omics_raw), , drop = FALSE
   ]
@@ -332,14 +324,16 @@ run_dunedinpace_residualized_changes <- function(
   score_influence_hc0 <- weight_matrix %*% influence_hc0
   score_influence_hc1 <- weight_matrix %*% influence_hc1
 
-  signature <- digest::digest(list(
-    schema = "dunedinpace_residualized_changes_v1",
-    probes = probes,
-    weights = matched$WEIGHT,
-    covariates = covariates,
-    pheno = pheno,
-    probe_values = probe_values
-  ), algo = "sha256")
+  input_paths <- c(
+    omics_raw_path, pheno_raw_path, control_pc_path, cell_pc_path, weights_path
+  )
+  input_info <- file.info(input_paths)
+  input_fingerprint <- data.frame(
+    PATH = normalizePath(input_paths),
+    SIZE = input_info$size,
+    MODIFIED = input_info$mtime,
+    stringsAsFactors = FALSE
+  )
   artifact <- list(
     schema_version = "dunedinpace_residualized_changes_v1",
     scope = "all",
@@ -352,7 +346,7 @@ run_dunedinpace_residualized_changes <- function(
       treatment_levels[[2L]], "minus", treatment_levels[[1L]]
     ),
     normalization = "none",
-    signature = signature,
+    input_fingerprint = input_fingerprint,
     covariates = covariates,
     coverage = transform(
       weight_table,
@@ -403,9 +397,6 @@ if (sys.nframe() == 0L) {
   control_pc_path <- path.expand(
     "~/FAST/Data/CALERIE/Raw/DNAm/CALERIE_control_pcs_rgset_goodsamples.csv"
   )
-  cell_count_path <- path.expand(
-    "~/FAST/Data/CALERIE/Raw/DNAm/CALERIE_SALAS_cell_counts_chunk.csv"
-  )
   cell_pc_path <- path.expand(
     "~/FAST/Data/CALERIE/Raw/DNAm/Cell_PCs.csv"
   )
@@ -427,9 +418,7 @@ if (sys.nframe() == 0L) {
     omics_raw_path = omics_raw_path,
     pheno_raw_path = pheno_raw_path,
     control_pc_path = control_pc_path,
-    cell_count_path = cell_count_path,
     cell_pc_path = cell_pc_path,
-    pipeline_repo = pipeline_repo,
     output_dir = output_dir,
     log = log_status
   )
