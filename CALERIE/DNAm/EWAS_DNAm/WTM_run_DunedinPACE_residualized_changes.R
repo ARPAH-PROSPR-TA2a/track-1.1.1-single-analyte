@@ -171,7 +171,7 @@ run_dunedinpace_residualized_changes <- function(
     stop("No subjects have both a retained baseline and follow-up")
   }
 
-  weights_dir <- file.path(output_dir, "dunedinpace_raw_beta_jackknife_v1")
+  weights_dir <- file.path(output_dir, "DNAm_Bvals_1.1.1/dunedinpace_raw_beta_jackknife_v1")
   weights_path <- file.path(weights_dir, "sysdata.rda")
   if (!file.exists(weights_path)) {
     stop("Pinned DunedinPACE weights not found: ", weights_path)

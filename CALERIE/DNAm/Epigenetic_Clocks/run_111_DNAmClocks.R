@@ -1,15 +1,22 @@
+library(readr)
 library(dplyr)
 library(forcats)
-library(readr)
 library(tibble)
+library(future)
+library(furrr)
+library(emmeans)
+library(lme4)
+library(lmerTest)
 
 # -----------------------------
 # Create clock data
 # -----------------------------
-DunedinPace <- read_csv(file = "~/CALERIE/DNAm/1.1.1/EpigeneticClocks/data/calerie_dunedinPACE_barcode.csv")
-PCClocks <- read_csv(file = "~/CALERIE/DNAm/1.1.1/EpigeneticClocks/data/CALERIE_PC-clocks_agedwb_CPR_fixed.csv")
-SystemAge <- read_rds("~/CALERIE/DNAm/SystemAge/result_SystemAge")
-GrimAgeV2 <- read_csv("~/CALERIE/DNAm/GrimAgeV2/GrimAgeV2.csv")
+
+DunedinPace <- read_csv(file = "~/FAST/Data/CALERIE/Raw/DNAm/calerie_dunedinPACE_barcode.csv")
+PCClocks <- read_csv(file = "~/FAST/Data/CALERIE/Raw/DNAm/CALERIE_PC-clocks_agedwb_CPR_fixed.csv")
+SystemAge <- read_rds("~/FAST/Data/CALERIE/Raw/DNAm/result_SystemAge")
+GrimAgeV2 <- read_csv("~/FAST/Data/CALERIE/Raw/DNAm/GrimAgeV2.csv")
+FraminghamPACE <- read_csv("~/FAST/Data/CALERIE/Raw/DNAm/CALERIE_FraminghamPACE_df_2.csv")
 
 dup_check <- bind_rows(
   DunedinPace |> count(barcode) |> filter(n > 1) |> mutate(dataset = "DunedinPace"),
@@ -41,6 +48,12 @@ SystemAge_clean <- SystemAge |>
   select(barcode, SystemsAge) |>
   distinct(barcode, .keep_all = TRUE)
 
+FraminghamPACE_clean <- FraminghamPACE |>
+  rename(barcode=BARCODE) |>
+  select(barcode, ElasticNet, Ridge) |>
+  distinct(barcode, .keep_all = TRUE)
+
+
 # Confirm barcode is unique
 stopifnot(!anyDuplicated(DunedinPace_clean$barcode))
 stopifnot(!anyDuplicated(PCClocks_clean$barcode))
@@ -63,22 +76,27 @@ Epigenetic_Clock <- DunedinPace_clean |>
     SystemAge_clean,
     by = "barcode",
     relationship = "one-to-one"
+  ) |>
+  full_join(
+    FraminghamPACE_clean,
+    by = "barcode",
+    relationship = "one-to-one"
   )
 
-write_csv(Epigenetic_Clock, file = "~/CALERIE/DNAm/1.1.1/EpigeneticClocks/data/Epigenetic_Clock.csv")
+write_csv(Epigenetic_Clock, file = "~/FAST/Data/CALERIE/Raw/DNAm/Epigenetic_Clock_updated.csv")
 
 # -----------------------------
 # Paths and parameters
 # -----------------------------
-omics_raw_path <- path.expand("~/CALERIE/DNAm/1.1.1/EpigeneticClocks/data/Epigenetic_Clock.csv")
-pheno_raw_path <- path.expand("~/CALERIE/DNAm/data/pheno/CALERIE_CPR_processed_pheno.rds")
-control_pc_path <- path.expand("~/CALERIE/DNAm/data/covariate/CALERIE_control_pcs_rgset_goodsamples.csv")
-cell_pcs_path <- path.expand("~/CALERIE/DNAm/data/covariate/Cell_PCs.csv")
+omics_raw_path <- path.expand("~/FAST/Data/CALERIE/Raw/DNAm/Epigenetic_Clock_updated.csv")
+pheno_raw_path <- path.expand("~/FAST/Data/CALERIE/Raw/DNAm/CALERIE_CPR_processed_pheno.rds")
+control_pc_path <- path.expand("~/FAST/Data/CALERIE/Raw/DNAm/CALERIE_control_pcs_rgset_goodsamples.csv")
+cell_pcs_path <- path.expand("~/FAST/Data/CALERIE/Raw/DNAm/Cell_PCs.csv")
 
-pipeline_repo <- path.expand("~/CALERIE/repos/1.1.1/track-1.1.1-single-analyte")
-out_dir <- path.expand("~/CALERIE/DNAm/TreatmentWAS/EpigeneticClocks")
+pipeline_repo <- path.expand("~/FAST/GitHub/track-1.1.1")
+out_dir <- path.expand("~/FAST/Outputs/1.1.1//DNAmClock_1.1.1_Outputs")
 
-omics_type <- "DNAm"
+omics_type <- "other"
 n_cores <- 3
 results_path <- file.path(out_dir, "results.rds")
 reports_path <- file.path(out_dir, "reports.rds")
@@ -134,11 +152,11 @@ pheno <- pheno_raw |>
     snppc3.x = as.numeric(scale(snppc3.x))
   ) |>
   mutate(
-    fu = factor(as.numeric(fu), levels = c(0, 1, 2)),
-    female = as_factor(female),
-    CR = as_factor(CR),
-    deidsite = as_factor(deidsite),
-    bmistrat = as_factor(bmistrat)
+    fu = factor(haven::zap_labels(fu), levels = c(0, 1, 2)),
+    female = haven::as_factor(female),
+    CR = haven::as_factor(CR),
+    deidsite = haven::as_factor(deidsite),
+    bmistrat = haven::as_factor(bmistrat)
   ) |>
   rename(
     SAMPLE_ID = Barcode,
