@@ -20,7 +20,9 @@ cell_pcs_path <- path.expand("~/FAST/Data/CALERIE/Raw/DNAm/Cell_PCs.csv")
 
 pipeline_repo <- path.expand("~/FAST/GitHub/track-1.1.1")
 out_dir <- path.expand("~/FAST/Outputs/1.1.1")
-dunedinpace_dir <- file.path(out_dir, "dunedinpace_raw_beta_jackknife_v1")
+dunedinpace_dir <- file.path(
+  out_dir, "DNAm_Bvals_1.1.1", "dunedinpace_raw_beta_jackknife_v1"
+)
 
 omics_type <- "DNAm"
 n_cores <- 47

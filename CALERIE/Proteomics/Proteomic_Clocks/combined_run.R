@@ -1,3 +1,7 @@
+# Historical runner; retained for reference.
+# Maintained entry point: CALERIE/Proteomics/Proteomic_Clocks/run_Proteomic_Clocks.R
+# See CALERIE/README.md for inputs and outputs.
+
 library(dplyr)
 library(forcats)
 library(readxl)

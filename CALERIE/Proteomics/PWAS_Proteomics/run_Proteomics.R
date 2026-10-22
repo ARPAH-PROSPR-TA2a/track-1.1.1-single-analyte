@@ -1,3 +1,7 @@
+# Historical runner; retained for reference.
+# Maintained entry point: CALERIE/Proteomics/PWAS_Proteomics/combined_run.R
+# See CALERIE/README.md for inputs and outputs.
+
 setwd("~/calerie_pipeline/repos/track-1.1.1-single-analyte-branch")
 source("main.R")
 
