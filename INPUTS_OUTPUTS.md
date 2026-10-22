@@ -15,9 +15,13 @@ A data frame with one row per sample (one subject can appear multiple times, onc
 | `SAMPLE_ID` | character | Unique across the entire data frame — no duplicates |
 | `SUBJECT_ID` | character | Repeated across timepoints for the same person; every `SUBJECT_ID × FU` pair must be unique |
 | `FU` | factor (or numeric, auto-coerced) | Must contain `0` (baseline) and at least one follow-up (`1`, `2`, …); values must be consecutive integers with no gaps |
-| `TREATMENT_GROUP` | factor (or numeric, auto-coerced) | Binary: `0` = control, `1` = treatment; both groups must be present |
+| `TREATMENT_GROUP` | factor (or numeric, auto-coerced) | `0` = control, `1` = treatment. Both groups must be present for a standard two-group study; assignment is constant within subject |
 | `FEMALE` | factor (or numeric, auto-coerced) | Binary: `0` = male, `1` = female |
 | *Additional covariates* | numeric / factor / logical | Any extra columns named in `additional_covariates`; NAs are allowed but reduce sample size |
+
+If you wish to add additional intervention arms, use codes `2`, `3`, and so on
+in `TREATMENT_GROUP` and supply [`treatment_labels`](#treatment_labels) for
+every group, including control.
 
 **Example:**
 
@@ -43,7 +47,10 @@ A data frame with one row per analyte (protein, metabolite, CpG site, etc.) and 
 | `ANALYTE_NAME` | character | Unique identifier for each feature; must be the first column |
 | Sample ID columns | numeric | One column per sample, named exactly as values in `pheno$SAMPLE_ID` |
 
-Samples present in omics but not in pheno are dropped silently. Samples present in pheno but not in omics are dropped with a warning.
+Model fitting uses matching sample IDs and reports the number of unmatched
+samples. Missing baseline or follow-up measurements can further reduce the
+observations usable for an individual analyte. Phenotype counts in the reports
+describe retained phenotype rows, not each model's complete-case sample size.
 
 **Example:**
 
@@ -77,9 +84,42 @@ additional_covariates = c("age", "bmi", "race")
 
 ---
 
+### `treatment_labels`
+
+Optional for the standard `0` = control, `1` = treatment study. Leaving it
+as `NULL` uses the labels `"Control"` and `"Treatment"`. To supply custom names,
+pass a named character vector to either public function:
+
+```r
+treatment_labels = c(`0` = "Usual care", `1` = "Diet")
+```
+
+If you wish to add additional intervention arms, give each its own code in
+`TREATMENT_GROUP` (`2`, `3`, and so on). `treatment_labels` is then required
+and must name every group, including control:
+
+```r
+treatment_labels = c(`0` = "Usual care", `1` = "Diet", `2` = "Diet + exercise")
+```
+
+When a map is supplied, its keys must match **exactly** the codes observed in the full
+phenotype input, including control. Keys and labels must be unique and
+nonblank, with no missing values. Validation happens before filtering or sex
+stratification, so retain labels for arms later lost from a subset.
+
+Codes are categorical: `0` is always control, positive integer codes identify
+active arms, and the pipeline does not renumber them. Codes need not be
+consecutive, and there is no fixed maximum number of arms. Neither the
+caller’s phenotype nor omics data frame is modified. The normalized full map
+is returned in `$metadata$treatment_labels`.
+
+---
+
 ### `n_cores` *(FAST_omics_WAS only)*
 
-Integer. Number of cores to use for parallelizing the per-analyte model fits. Defaults to `NULL`, which auto-detects as `max(1, detectCores() - 1)`. Set to `1` to run serially.
+Integer. Number of cores to use for parallelizing the per-analyte model fits.
+Defaults to `NULL`, which auto-detects as `max(1, detectCores() - 1)` and falls
+back to one worker if detection is unavailable. Set to `1` to run serially.
 
 Note: `detectCores()` may overcount in HPC/container environments — set explicitly if running on a cluster with allocated core limits.
 
@@ -101,7 +141,11 @@ checkpoint_dir/
   level/female/  batch_1.rds, ...
 ```
 
-**Important**: checkpoint files are tied to analyte ordering and batch size. Do not change the `omics` data or `checkpoint_batch_size` between a run and its resume.
+Resume with the same input data, model settings, and batch layout. Use a fresh
+checkpoint directory when any of these change or when upgrading across this
+result-schema change. You can change `n_cores` or display labels
+in `treatment_labels` on resume; labels are applied after the batches are
+assembled and do not require refitting.
 
 ---
 
@@ -121,16 +165,17 @@ Logical. Default: `FALSE`. When `TRUE`, analysis and reporting emit `[1.1.1]` pr
 
 ### `FAST_omics_WAS()`
 
-Returns a list with two top-level elements:
+Returns:
 
 ```r
 list(
   analysis_change = ...,   # Change-score models (FU value − baseline value)
-  analysis_level  = ...    # Level models (absolute FU value)
+  analysis_level  = ...,   # Level models (absolute FU value)
+  metadata       = ...    # Schema version and treatment mapping
 )
 ```
 
-Each element is stratified the same way:
+Each analysis element is stratified the same way:
 
 ```r
 $all     # Full dataset
@@ -140,12 +185,14 @@ $female  # Female subjects only (NULL if dataset is single-sex)
 
 ### `FAST_omics_WAS_reports()`
 
-Returns a list of QC and data summary reports, stratified the same way:
+Returns study-level counts and balance checks, plus stratified variable summaries:
 
 ```r
-$all     # Full dataset
-$male    # Male subjects only  (NULL if dataset is single-sex)
-$female  # Female subjects only (NULL if dataset is single-sex)
+$pheno_summary
+$arm_counts
+$variable_summaries    # Contains $all, $male, $female
+$randomization_reports
+$metadata
 ```
 
 ---
@@ -158,9 +205,13 @@ Each stratum contains two tables: `$coefficients` and `$treatment_effects`.
 
 The `change` response is `FU_value − baseline_value`; the `level` response is
 `FU_value`. Both include `analyte_baseline` as a covariate, so both are
-baseline-adjusted. Interpretation of `TREATMENT_GROUP` effects differs:
-`change` gives the treatment effect on the *change from baseline*, while
-`level` gives the treatment effect on the *absolute post-treatment level*.
+baseline-adjusted. On the same data and model specification, these two
+response parameterizations give the same treatment contrasts; subtracting
+baseline changes the baseline coefficient rather than the treatment estimand.
+
+Each model is a joint fit of all available arms in the stratum. Separate
+arm-versus-control tables are views of those fitted contrasts, not separately
+fitted two-arm models. Unequal allocation ratios are supported.
 
 ---
 
@@ -180,6 +231,10 @@ response ~ TREATMENT_GROUP * FU + FEMALE + analyte_baseline + [additional covari
 ```
 
 One row per analyte × coefficient combination.
+
+`TREATMENT_GROUP` in these formulas is a categorical arm factor with the
+original input codes and control as reference. There is one coefficient for each active arm against
+control, and arm-by-FU interactions in the repeated-follow-up model.
 
 **Example (single follow-up, Proteomics):**
 
@@ -215,13 +270,31 @@ protein_B      bmi                  0.003          0.004    0.488     0.712
 
 ### `$treatment_effects`
 
-The treatment-vs-control contrast at each follow-up level, one row per analyte × FU.
-For LM (single FU), this is identical to the `TREATMENT_GROUP1` row in `$coefficients`.
+The active-arm-vs-control contrasts at each follow-up level, one row per
+analyte × FU × contrast. For LM (single FU), each estimable contrast matches
+its active-arm coefficient in `$coefficients` under the default treatment
+coding. Other factor coding or aliased models use explicit contrasts instead.
 For LME4 (multiple FUs), these are estimated marginal means contrasts from `emmeans`,
 which properly account for the covariance between the `TREATMENT_GROUP` main effect
 and the `TREATMENT_GROUP:FU` interaction.
 
-**Example (two follow-up timepoints, LME4):**
+Only active-minus-control contrasts are returned; A-minus-B is not added.
+The returned effects share controls and are correlated. Their cross-contrast
+covariance is not exported here; a formal A-minus-B test requires that
+covariance, rather than treating the two standard errors as independent.
+The raw `P_VALUE` uses no adjustment across contrasts (`adjust = "none"`).
+Each contrast receives its own BH correction across analytes at each FU,
+within each analysis and stratum. Nonestimable contrasts retain their expected
+rows with `NA` estimates, uncertainty, and p-values.
+
+```r
+te <- results$analysis_change$all$treatment_effects
+effects_by_treatment <- split(te, te$TREATMENT)
+effects_diet <- effects_by_treatment[["Diet"]]
+effects_diet_exercise <- effects_by_treatment[["Diet + exercise"]]
+```
+
+**Example (binary analysis, two follow-ups; identity/status columns omitted):**
 
 ```
 ANALYTE_NAME   FU   EFFECT_SIZE    SE       P_VALUE   BH_P_VALUE
@@ -239,144 +312,123 @@ protein_C      2    0.198          0.077    0.011     0.044
 |:---|:---|
 | `ANALYTE_NAME` | Identifier for the analyte |
 | `FU` | Follow-up timepoint at which the contrast is evaluated |
-| `EFFECT_SIZE` | Estimated treatment − control difference at that FU. For `change` models: difference in change from baseline. For `level` models: difference in absolute level |
+| `CONTRAST` | Stable comparison identifier built from input codes, e.g. `1_vs_0` or `2_vs_0` |
+| `TREATMENT` | Active-arm display label; `"Treatment"` for the default binary call |
+| `REFERENCE` | Control display label; `"Control"` for the default binary call |
+| `EFFECT_SIZE` | Estimated active-arm − control difference at that FU, adjusted for baseline and model covariates |
 | `SE` | Standard error of the contrast. For LME4, derived from `emmeans` and accounts for parameter covariance |
 | `P_VALUE` | Two-sided p-value for the treatment vs. control contrast |
-| `BH_P_VALUE` | Benjamini-Hochberg corrected p-value, applied separately within each `FU` level across all analytes |
+| `BH_P_VALUE` | Benjamini-Hochberg corrected p-value across analytes within each `FU` and `CONTRAST`, separately for each analysis and stratum |
 | `BH_P_VALUE_FILTERED` | *(DNAm only)* As above; see [DNAm Filtered BH](#dnam-filtered-bh) |
+| `IN_FILTERED_SET` | *(DNAm treatment effects only)* Logical `TRUE`/`FALSE`: `ANALYTE_NAME %in% filtered_probes`, regardless of `STATUS` or missing inference |
+| `STATUS` | `ok`, `not_estimable`, or `fit_error`; the latter two retain rows with missing inference |
+
+### `$metadata`
+
+Both analysis and report objects include result schema version `"2.0"`, the
+normalized full `treatment_labels` map, and a `treatments` data frame containing
+`ARM` (original active code), `TREATMENT` (active label), `REFERENCE` (control
+label), and `CONTRAST` (code-based identifier). Metadata also records the BH
+correction policy. Preserve the mapping alongside any exported table.
 
 ---
 
 ## `FAST_omics_WAS_reports()` — Report Outputs
 
-Each stratum (`$all`, `$male`, `$female`) contains four tables.
-
----
-
 ### `$pheno_summary`
 
-One row per `(FU, FEMALE)` cell. Subject-level counts (`N_SUBJECTS`, `N_CONTROL`, `N_TREATMENT`) deduplicate by `SUBJECT_ID` so repeated samples for the same person at the same timepoint don't inflate counts. `N_SAMPLES` is the raw row count.
+Study-level table with one row per `(FU, FEMALE)` cell. `N_SUBJECTS`,
+`N_CONTROL`, and `N_TREATMENT` count unique subjects; `N_SAMPLES` counts rows.
+`N_TREATMENT` includes all active arms. Use `$arm_counts` for individual arms.
 
-**Example:**
+### `$arm_counts`
 
-```
-FU   FEMALE   N_SUBJECTS   N_CONTROL   N_TREATMENT   N_SAMPLES
-0    0        85           42          43            85
-0    1        93           46          47            93
-1    0        83           41          42            83
-1    1        91           45          46            91
-2    0        81           40          41            81
-2    1        89           44          45            89
-```
-
-**Column descriptions:**
+One row per FU × FEMALE × arm, including zero-count cells.
 
 | Column | Description |
 |:---|:---|
-| `FU` | Follow-up timepoint (0 = baseline) |
-| `FEMALE` | Sex indicator: 0 = male, 1 = female |
-| `N_SUBJECTS` | Number of unique subjects in this cell |
-| `N_CONTROL` | Number of unique control subjects (`TREATMENT_GROUP == 0`) |
-| `N_TREATMENT` | Number of unique treatment subjects (`TREATMENT_GROUP == 1`) |
-| `N_SAMPLES` | Raw number of rows (samples) in this cell; equals `N_SUBJECTS` when each person has one sample per timepoint |
+| `FU`, `FEMALE` | Visit and sex cell |
+| `ARM` | Original input code: `0` control, positive codes for active arms |
+| `TREATMENT` | Display label from `treatment_labels`, including the control label |
+| `IS_CONTROL` | Whether this is the shared control arm |
+| `N_SUBJECTS` | Unique subjects in this cell |
+| `N_SAMPLES` | Sample rows in this cell |
 
----
+The control count is reported once per cell, not repeated as a new set of
+participants for each comparison.
 
-### `$omics_summary`
+### `$variable_summaries`
 
-Per-analyte baseline distribution, computed at baseline, `FU == 0`, only. Describes the pre-treatment reference distribution for each feature.
-
-**Example:**
-
-```
-ANALYTE_NAME   N_NONMISSING   MEAN    MEDIAN   SD      MIN     MAX
-protein_A      178            1.204   1.189    0.342   0.445   2.187
-protein_B      178            0.523   0.511    0.187   0.102   0.981
-protein_C      175            2.017   2.003    0.401   1.102   3.214
-protein_D      178            0.781   0.769    0.224   0.213   1.445
-```
-
-**Column descriptions:**
-
-| Column | Description |
-|:---|:---|
-| `ANALYTE_NAME` | Identifier for the analyte |
-| `N_NONMISSING` | Number of non-NA baseline samples for this analyte |
-| `MEAN` | Mean value across baseline samples |
-| `MEDIAN` | Median value across baseline samples |
-| `SD` | Standard deviation across baseline samples |
-| `MIN` | Minimum value across baseline samples |
-| `MAX` | Maximum value across baseline samples |
-
----
-
-### `$covariates_summary`
-
-Only present when `additional_covariates` is specified; `NULL` otherwise. One row per covariate. The `SUMMARY` column is a **list column** — each cell contains a named list whose contents depend on the covariate type.
-
-**Example:**
-
-```
-COVARIATE_NAME   TYPE      N_NA   SUMMARY
-age              numeric   0      list(mean=55.2, median=55.0, sd=8.3, min=35.0, max=78.0)
-bmi              numeric   3      list(mean=27.1, median=26.8, sd=4.2, min=18.5, max=41.2)
-race             factor    0      list(n_levels=3, level_names=c("1","2","3"), counts=c(89,54,32))
-smoker           logical   1      list(n_true=74, n_false=101)
-```
-
-To access a summary for a specific covariate:
+Contains `$all`, `$male`, and `$female` strata where applicable. Within each
+stratum, summaries are separated by FU and original arm code:
 
 ```r
-reports$all$covariates_summary$SUMMARY[[1]]  # by position
-# or
-idx <- which(reports$all$covariates_summary$COVARIATE_NAME == "age")
-reports$all$covariates_summary$SUMMARY[[idx]]
+reports$variable_summaries$all$omics_FU0_Tx0       # Control, baseline
+reports$variable_summaries$all$omics_FU1_Tx1       # First active arm, FU1
+reports$variable_summaries$all$omics_FU1_Tx2       # Second active arm, FU1
+reports$variable_summaries$all$covariates_FU0_Tx0
+reports$metadata$treatment_labels                 # Labels for every Tx code
 ```
 
-**Column descriptions:**
+Empty cells are omitted. Omics entries have one row per analyte with
+`ANALYTE_NAME`, `N_NONMISSING`, `MEAN`, `MEDIAN`, `SD`, `MIN`, and `MAX`.
+Covariate entries are present when additional covariates were requested and
+have `COVARIATE_NAME`, `TYPE`, `N_NA`, and a `SUMMARY` list column. Numeric
+summaries contain descriptive statistics; factor summaries contain levels
+and counts; logical summaries contain true/false counts.
 
-| Column | Description |
-|:---|:---|
-| `COVARIATE_NAME` | Name of the covariate as provided in `additional_covariates` |
-| `TYPE` | Detected R type: `"numeric"`, `"factor"`, or `"logical"` |
-| `N_NA` | Number of missing values at baseline (`FU == 0`) |
-| `SUMMARY` | List column. For **numeric**: `mean`, `median`, `sd`, `min`, `max`. For **factor**: `n_levels`, `level_names`, `counts` (one count per level). For **logical**: `n_true`, `n_false` |
+### `$randomization_reports`
 
----
+Study-level baseline balance checks, separately for each active arm versus
+shared control. Each table includes `CONTRAST`, `TREATMENT`, and `REFERENCE`.
 
-### `$randomization_summary`
+- `$omics_report`: one row per analyte and contrast. Welch's t-test with
+  `MEAN_DIFFERENCE`, `COHENS_D`, `SE`, `P_VALUE`, and `BH_P_VALUE`; BH correction
+  is across analytes within each contrast.
+- `$covariate_report`: `FEMALE` when both sexes are present, plus requested
+  additional covariates. Numeric variables use Welch's t-test; logical
+  variables and factors use chi-squared or Fisher's exact test
+  according to cell counts. Columns include `VARIABLE`, `TYPE`, `TEST`,
+  `STATISTIC`, `MIN_CELL_COUNT`, `P_VALUE`, `SUMMARY_CONTROL`, and
+  `SUMMARY_TREATMENT`.
 
-Baseline balance check: a Welch's t-test comparing treatment vs. control at `FU == 0` for each analyte. This is a diagnostic — in a well-randomized trial, no analyte should show a significant difference at baseline.
-
-**Example:**
-
-```
-ANALYTE_NAME   MEAN_DIFFERENCE   COHENS_D   SE      P_VALUE   BH_P_VALUE
-protein_A      0.012             0.035      0.041   0.770     0.912
-protein_B     -0.023             0.123      0.044   0.601     0.912
-protein_C      0.041             0.102      0.051   0.421     0.851
-protein_D     -0.007             0.031      0.039   0.858     0.912
-```
-
-**Column descriptions:**
-
-| Column | Description |
-|:---|:---|
-| `ANALYTE_NAME` | Identifier for the analyte |
-| `MEAN_DIFFERENCE` | Mean(treatment) − Mean(control) at baseline |
-| `COHENS_D` | Effect size: mean difference divided by pooled standard deviation |
-| `SE` | Welch standard error: `sqrt(var_control/n_control + var_treatment/n_treatment)` |
-| `P_VALUE` | Two-sided p-value from Welch's t-test (does not assume equal variances) |
-| `BH_P_VALUE` | Benjamini-Hochberg corrected p-value across all analytes |
+These are baseline diagnostics, not treatment-effect estimates. Omics rows
+with fewer than two available values in either arm are omitted. If a baseline
+arm is absent, covariate summaries remain available but inferential values
+are `NA`.
 
 ---
 
 ## DNAm Filtered BH
 
-When `omics_type == "DNAm"`, two additional columns appear in `$coefficients` and `$treatment_effects` in both `analysis_change` and `analysis_level`:
+When `omics_type == "DNAm"`, the following columns appear in both
+`analysis_change` and `analysis_level`:
 
-| Column | Description |
-|:---|:---|
-| `BH_P_VALUE_FILTERED` | BH-corrected p-value computed only within the filtered probe set. `NA` for probes not in the filtered set |
+| Column | Tables | Description |
+|:---|:---|:---|
+| `BH_P_VALUE_FILTERED` | `$coefficients` and `$treatment_effects` | BH-corrected p-value computed only within the filtered probe set. `NA` for probes outside the set or with missing p-values |
+| `IN_FILTERED_SET` | `$treatment_effects` only | Logical `TRUE`/`FALSE`, equal to `ANALYTE_NAME %in% filtered_probes` |
+
+The grouping matches the full-set correction: coefficient-wise for
+`coefficients`, and FU-by-contrast for `treatment_effects`, separately within
+each analysis and stratum.
+
+`IN_FILTERED_SET` explicitly records membership, which cannot be inferred from
+`BH_P_VALUE_FILTERED = NA` when inference is missing. It is independent of
+`STATUS` and is the same for a probe across all follow-ups, contrasts, analyses,
+and strata. Membership is attached after batch assembly without changing model
+fits or BH correction. It is absent from coefficient tables and non-DNAm results.
+DNAm plots use `IN_FILTERED_SET` for filtered membership and show labeled empty
+plots when a cell has no available inference.
 
 This allows comparing significance under two different multiple-testing burdens — the full analyzed probe set (`BH_P_VALUE`) vs. a more restricted, pre-specified probe set (`BH_P_VALUE_FILTERED`) — without re-running the models. The filtered probe set is loaded from `Data/FAST_epicv1_epicv2_sugden_TruD_probe_list.rds`.
+
+
+## Existing downstream consumers
+
+This result schema adds multi-arm support to Track 1.1.1 only. Summary consumers
+that support one comparison must receive one selected `TREATMENT`/`CONTRAST`,
+with its mapping retained as provenance. Track 3.3 additionally needs its outcome
+model to adjust for the full arm factor; splitting these tables alone does not
+complete the mediation extension. Neither consumer has been upgraded here to
+accept combined multi-arm tables.

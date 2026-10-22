@@ -86,26 +86,10 @@ expected_batches <- function(n_analytes, batch_size) {
 cat("Test Suite: Parallelization and Checkpointing\n")
 cat("==============================================\n\n")
 
-pheno_raw <- readRDS("PracticeData/pheno_example.rds")
-omics_raw <- readRDS("PracticeData/synth_small_betas.rds")
-
-if (any(sapply(pheno_raw, function(x) inherits(x, "haven_labelled")))) {
-  for (col in names(pheno_raw)) {
-    if (inherits(pheno_raw[[col]], "haven_labelled")) {
-      raw_values <- as.vector(pheno_raw[[col]])
-      numeric_attempt <- tryCatch(as.numeric(raw_values), error = function(e) NA)
-      pheno_raw[[col]] <- if (!all(is.na(numeric_attempt))) numeric_attempt else as.character(raw_values)
-    }
-  }
-}
-
-pheno <- pheno_raw[!duplicated(pheno_raw$SAMPLE_ID), ]
-pheno <- pheno[complete.cases(pheno[, c("SAMPLE_ID", "FU", "SUBJECT_ID", "FEMALE", "TREATMENT_GROUP")]), ]
-
-analyte_names_raw <- rownames(omics_raw)
-omics_full <- as.data.frame(omics_raw)
-colnames(omics_full) <- colnames(omics_raw)
-omics_full <- cbind(ANALYTE_NAME = analyte_names_raw, omics_full, stringsAsFactors = FALSE)
+source("tests/synthetic_data.R")
+fixture <- .make_synthetic_test_data(n_analytes = 60L)
+pheno <- fixture$pheno
+omics_full <- fixture$omics
 
 additional_covariates <- c("agebl", "agevis", "ethnic", "race3", "mbmi")
 
@@ -425,6 +409,8 @@ cat("  P2 Serial vs parallel LME4:  ", if (p2_pass) "PASS" else "FAIL", "\n")
 cat("  P3 n_cores=NULL auto-detect:  ", if (p3_pass) "PASS" else "FAIL", "\n")
 cat("  P4 Plan restoration:          ", if (p4_pass) "PASS" else "FAIL", "\n\n")
 
+cat("  P5 Large omics globals limit: ", if (p5_pass) "PASS" else "FAIL", "\n\n")
+
 cat("Checkpointing:\n")
 cat("  C1/C2 Directory structure:    ", if (c1c2_pass) "PASS" else "FAIL", "\n")
 cat("  C3 No .tmp files:             ", if (c3_pass) "PASS" else "FAIL", "\n")
@@ -433,7 +419,9 @@ cat("  C5/C6 Resume:                 ", if (c5c6_pass) "PASS" else "FAIL", "\n")
 cat("  C7 Oversized batch size:      ", if (c7_pass) "PASS" else "FAIL", "\n")
 cat("  C8 batch_size=1:              ", if (c8_pass) "PASS" else "FAIL", "\n\n")
 
-all_pass <- p1_pass && p2_pass && p3_pass && p4_pass &&
+all_pass <- p1_pass && p2_pass && p3_pass && p4_pass && p5_pass &&
             c1c2_pass && c3_pass && c4_pass && c5c6_pass && c7_pass && c8_pass
 
 if (all_pass) cat("ALL TESTS PASSED\n") else cat("SOME TESTS FAILED\n")
+
+stopifnot(all_pass)

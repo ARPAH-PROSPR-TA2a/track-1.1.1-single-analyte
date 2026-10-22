@@ -6,11 +6,10 @@
     return(results_df)
   }
 
-  # Apply BH correction separately for each group (coefficient or FU level)
+  # A treatment-effect family is one contrast at one follow-up.
   results_df$BH_P_VALUE <- NA_real_
-
-  for (grp in unique(results_df[[group_col]])) {
-    grp_idx <- which(results_df[[group_col]] == grp)
+  groups <- do.call(interaction, c(results_df[group_col], list(drop = TRUE)))
+  for (grp_idx in split(seq_len(nrow(results_df)), groups)) {
     p_values_grp <- results_df[[p_value_col]][grp_idx]
     results_df$BH_P_VALUE[grp_idx] <- p.adjust(p_values_grp, method = "BH")
   }
@@ -102,6 +101,7 @@
     model_data <- data.frame(pheno_merged)
     model_data$analyte <- NA_real_
     model_data$analyte_baseline <- NA_real_
+    arm_levels <- levels(pheno_df$TREATMENT_GROUP)
 
     # Build model formula
     # analyte ~ TREATMENT_GROUP + FEMALE + baseline_analyte + covariates
@@ -123,7 +123,7 @@
     analyte_names <- omics_df$ANALYTE_NAME
 
     # Get FU level for this analysis (should be single value in LM analysis)
-    fu_level <- unique(pheno_merged$FU)
+    fu_level <- unique(pheno_df$FU)
     if (length(fu_level) != 1) {
       warning("LM analysis expects single FU level, found:", length(fu_level))
       if (length(fu_level) > 1) {
@@ -202,6 +202,7 @@
 
       chunk_results <- furrr::future_map(worker_chunks, function(items) {
         analyte_results <- lapply(items, function(item) {
+          unavailable <- .empty_treatment_effects(item$analyte_name, fu_level, arm_levels)
           tryCatch({
             analyte_name <- item$analyte_name
             fu_values <- item$fu_values
@@ -214,6 +215,11 @@
               md$analyte <- fu_values
             }
             md$analyte_baseline <- baseline_vals
+
+            usable <- complete.cases(md[, c("analyte", "TREATMENT_GROUP", covariate_terms), drop = FALSE])
+            if (length(unique(md$TREATMENT_GROUP[usable])) < 2L) {
+              return(list(coefficients = NULL, treatment_effects = unavailable))
+            }
 
             fit <- lm(as.formula(formula_str), data = md)
             n_obs <- nrow(fit$model)
@@ -230,27 +236,22 @@
               row.names = NULL
             )
 
-            ctrl_idx <- grepl("^TREATMENT_GROUP", rownames(coef_table))
-            te <- data.frame(
-              ANALYTE_NAME = analyte_name,
-              FU = fu_level,
-              EFFECT_SIZE = coef_table[ctrl_idx, "Estimate"],
-              SE = coef_table[ctrl_idx, "Std. Error"],
-              P_VALUE = coef_table[ctrl_idx, "Pr(>|t|)"],
-              stringsAsFactors = FALSE,
-              row.names = NULL
-            )
+            te <- .extract_treatment_effects(fit, analyte_name, fu_level, arm_levels,
+                                             coefficient_table = coef_table)
 
             list(coefficients = coefs, treatment_effects = te)
           }, error = function(e) {
             warning("Error processing analyte '", item$analyte_name, "': ", e$message)
-            NULL
+            unavailable$STATUS <- "fit_error"
+            list(coefficients = NULL, treatment_effects = unavailable)
           })
         })
 
         combined <- .combine_analysis_results(analyte_results)
         combined$worker_pid <- Sys.getpid()
-        combined$n_failed <- sum(vapply(analyte_results, is.null, logical(1)))
+        combined$n_failed <- sum(vapply(analyte_results, function(x) {
+          all(x$treatment_effects$STATUS == "fit_error")
+        }, logical(1)))
         combined
       }, .options = furrr::furrr_options(seed = TRUE))
 
@@ -344,6 +345,8 @@
     model_data <- data.frame(pheno_merged)
     model_data$analyte <- NA_real_
     model_data$analyte_baseline <- NA_real_
+    arm_levels <- levels(pheno_df$TREATMENT_GROUP)
+    fu_levels <- sort(unique(as.integer(as.character(pheno_df$FU))))
 
     # Build model formula
     # analyte ~ TREATMENT_GROUP * factor(FU) + FEMALE + baseline_analyte + covariates + (1|SUBJECT_ID)
@@ -434,6 +437,7 @@
 
       chunk_results <- furrr::future_map(worker_chunks, function(items) {
         analyte_results <- lapply(items, function(item) {
+          unavailable <- .empty_treatment_effects(item$analyte_name, fu_levels, arm_levels)
           tryCatch({
             analyte_name <- item$analyte_name
             fu_values <- item$fu_values
@@ -446,6 +450,11 @@
               md$analyte <- fu_values
             }
             md$analyte_baseline <- baseline_vals
+
+            usable <- complete.cases(md[, c("analyte", "TREATMENT_GROUP", "FU", covariate_terms), drop = FALSE])
+            if (length(unique(md$TREATMENT_GROUP[usable])) < 2L) {
+              return(list(coefficients = NULL, treatment_effects = unavailable))
+            }
 
             fit <- lmerTest::lmer(as.formula(formula_str), data = md, REML = FALSE,
                                   control = lme4::lmerControl(calc.derivs = FALSE))
@@ -463,29 +472,22 @@
               row.names = NULL
             )
 
-            emm <- emmeans::emmeans(fit, ~ TREATMENT_GROUP | FU)
-            contr_df <- as.data.frame(pairs(emm, reverse = TRUE))
-
-            te <- data.frame(
-              ANALYTE_NAME = analyte_name,
-              FU = as.integer(as.character(contr_df$FU)),
-              EFFECT_SIZE = contr_df$estimate,
-              SE = contr_df$SE,
-              P_VALUE = contr_df$p.value,
-              stringsAsFactors = FALSE,
-              row.names = NULL
-            )
+            te <- .extract_treatment_effects(fit, analyte_name, fu_levels, arm_levels,
+                                             mixed = TRUE)
 
             list(coefficients = coefs, treatment_effects = te)
           }, error = function(e) {
             warning("Error processing analyte '", item$analyte_name, "': ", e$message)
-            NULL
+            unavailable$STATUS <- "fit_error"
+            list(coefficients = NULL, treatment_effects = unavailable)
           })
         })
 
         combined <- .combine_analysis_results(analyte_results)
         combined$worker_pid <- Sys.getpid()
-        combined$n_failed <- sum(vapply(analyte_results, is.null, logical(1)))
+        combined$n_failed <- sum(vapply(analyte_results, function(x) {
+          all(x$treatment_effects$STATUS == "fit_error")
+        }, logical(1)))
         combined
       }, .options = furrr::furrr_options(seed = TRUE, packages = c("lme4", "lmerTest", "emmeans")))
 
@@ -615,10 +617,11 @@
 
     if (!is.null(results$treatment_effects) && nrow(results$treatment_effects) > 0) {
       results$treatment_effects <- .apply_multiple_testing_correction(
-        results$treatment_effects, group_col = "FU"
+        results$treatment_effects, group_col = c("CONTRAST", "FU")
       )
       results$treatment_effects <- results$treatment_effects[
-        order(results$treatment_effects$ANALYTE_NAME, results$treatment_effects$FU),
+        order(results$treatment_effects$ANALYTE_NAME, results$treatment_effects$FU,
+              results$treatment_effects$CONTRAST),
       ]
     }
   }
@@ -636,9 +639,10 @@
 
   df$BH_P_VALUE_FILTERED <- NA_real_
 
-  for (grp in unique(df[[group_col]])) {
+  groups <- do.call(interaction, c(df[group_col], list(drop = TRUE)))
+  for (grp_idx in split(seq_len(nrow(df)), groups)) {
     # Subset to this group AND filtered probes
-    idx <- which(df[[group_col]] == grp & df$ANALYTE_NAME %in% filtered_probes)
+    idx <- grp_idx[df$ANALYTE_NAME[grp_idx] %in% filtered_probes]
     if (length(idx) > 0) {
       df$BH_P_VALUE_FILTERED[idx] <- p.adjust(df$P_VALUE[idx], method = "BH")
     }
@@ -660,8 +664,13 @@
 
     # Add column to treatment_effects
     outputs[[stratum]]$treatment_effects <- .add_filtered_bh_column(
-      outputs[[stratum]]$treatment_effects, filtered_probes, group_col = "FU"
+      outputs[[stratum]]$treatment_effects, filtered_probes, group_col = c("CONTRAST", "FU")
     )
+    # Probe membership is independent of whether a contrast was estimable.
+    if (!is.null(outputs[[stratum]]$treatment_effects)) {
+      outputs[[stratum]]$treatment_effects$IN_FILTERED_SET <-
+        outputs[[stratum]]$treatment_effects$ANALYTE_NAME %in% filtered_probes
+    }
   }
   return(outputs)
 }
@@ -704,6 +713,14 @@
       coefficients      = analysis_results$coefficients,
       treatment_effects = analysis_results$treatment_effects
     )
+    # Worker results use stable codes; attach treatment and control display labels.
+    te <- outputs[[dataset]]$treatment_effects
+    if (!is.null(te) && !is.null(pheno_list$treatments)) {
+      mapping_rows <- match(te$CONTRAST, pheno_list$treatments$CONTRAST)
+      te$TREATMENT <- pheno_list$treatments$TREATMENT[mapping_rows]
+      te$REFERENCE <- pheno_list$treatments$REFERENCE[mapping_rows]
+      outputs[[dataset]]$treatment_effects <- te
+    }
 
     .log_111(
       verbose,

@@ -65,9 +65,10 @@
   )
 }
 
-source(file.path(.track111_root, "validation_helpers.R"))
-source(file.path(.track111_root, "reporting_helpers.R"))
-source(file.path(.track111_root, "analysis_helpers.R"))
+source(file.path(.track111_root, "treatment_helpers.R"), local = TRUE)
+source(file.path(.track111_root, "validation_helpers.R"), local = TRUE)
+source(file.path(.track111_root, "reporting_helpers.R"), local = TRUE)
+source(file.path(.track111_root, "analysis_helpers.R"), local = TRUE)
 
 FAST_omics_WAS <- function(pheno,
                            omics,
@@ -76,7 +77,8 @@ FAST_omics_WAS <- function(pheno,
                            n_cores = NULL,
                            checkpoint_dir = NULL,
                            checkpoint_batch_size = 2000L,
-                           verbose = FALSE) {
+                           verbose = FALSE,
+                           treatment_labels = NULL) {
 
   analysis_started <- proc.time()[["elapsed"]]
 
@@ -84,7 +86,9 @@ FAST_omics_WAS <- function(pheno,
   # Note: detectCores() may overcount in HPC/container environments — set
   # n_cores explicitly if running on a cluster with allocated core limits.
   if (is.null(n_cores)) {
-    n_cores <- max(1L, parallel::detectCores() - 1L)
+    detected_cores <- parallel::detectCores()
+    n_cores <- if (is.na(detected_cores)) 1L else max(1L, detected_cores - 1L)
+    if (is.na(detected_cores)) .log_111(verbose, "CPU count unavailable; using one worker")
   }
 
   # future snapshots certain R options when a plan is set, including `exact`
@@ -116,7 +120,7 @@ FAST_omics_WAS <- function(pheno,
     dnam_probes <- .load_dnam_probe_lists()
   }
 
-  pheno_list <- .validate_pheno(pheno, additional_covariates)
+  pheno_list <- .validate_pheno(pheno, additional_covariates, treatment_labels)
   omics_list <- .validate_omics(omics, pheno_list, verbose = verbose)
 
   filtered_probes <- NULL
@@ -160,7 +164,8 @@ FAST_omics_WAS <- function(pheno,
 
   return(list(
     analysis_change = analysis_change,
-    analysis_level  = analysis_level
+    analysis_level  = analysis_level,
+    metadata = .treatment_metadata(pheno_list$treatments, pheno_list$treatment_labels)
   ))
 }
 
@@ -168,7 +173,8 @@ FAST_omics_WAS_reports <- function(pheno,
                                    omics,
                                    omics_type = "Proteomics",
                                    additional_covariates = NULL,
-                                   verbose = FALSE) {
+                                   verbose = FALSE,
+                                   treatment_labels = NULL) {
 
   reports_started <- proc.time()[["elapsed"]]
   .log_111(verbose, "reports validating inputs (serial)")
@@ -181,7 +187,7 @@ FAST_omics_WAS_reports <- function(pheno,
     dnam_probes <- .load_dnam_probe_lists()
   }
 
-  pheno_list <- .validate_pheno(pheno, additional_covariates)
+  pheno_list <- .validate_pheno(pheno, additional_covariates, treatment_labels)
   omics_list <- .validate_omics(omics, pheno_list, verbose = verbose)
 
   if (omics_type == "DNAm") {
@@ -197,6 +203,7 @@ FAST_omics_WAS_reports <- function(pheno,
     additional_covariates,
     verbose = verbose
   )
+  reports$metadata <- .treatment_metadata(pheno_list$treatments, pheno_list$treatment_labels)
 
   .log_111(
     verbose,

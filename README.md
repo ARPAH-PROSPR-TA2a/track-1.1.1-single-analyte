@@ -16,16 +16,14 @@ Clone the repository:
 git clone https://github.com/ARPAH-PROSPR-TA2a/track-1.1.1-single-analyte.git
 ```
 
-In your R script, set your working directory to the package directory
-and source the main module:
+In your R script or console, source the main module from your local checkout:
 
 ``` r
-setwd("path/to/track-1.1.1-single-analyte")
-source("main.R")
+source("/path/to/track-1.1.1-single-analyte/main.R")
 ```
 
 The pipeline automatically sources all necessary helper functions from
-the same directory.
+the same directory, without changing your working directory.
 
 ## FAST_omics_WAS()
 
@@ -65,8 +63,52 @@ reports <- FAST_omics_WAS_reports(
   verbose = TRUE
 )
 
-reports$all$pheno_summary
-reports$all$omics_summary
+reports$pheno_summary
+reports$variable_summaries$all$omics_FU0_Tx0
+```
+
+For the usual binary input, `TREATMENT_GROUP` is `0` for control and `1`
+for treatment. Labels default to `"Control"` and `"Treatment"`; optionally pass
+`treatment_labels = c("0" = "Usual care", "1" = "Diet")` to either function.
+
+### Multiple intervention arms
+
+Use distinct codes directly in `TREATMENT_GROUP`: `0` for the shared control,
+`1` for one active arm, `2` for another, and so on. Supply a named label for
+**every** observed code, including control:
+
+```r
+# pheno$TREATMENT_GROUP contains 0, 1, or 2, constant within each subject.
+labels <- c(`0` = "Usual care", `1` = "Diet", `2` = "Diet + exercise")
+results <- FAST_omics_WAS(pheno, omics, treatment_labels = labels, n_cores = 1)
+reports <- FAST_omics_WAS_reports(pheno, omics, treatment_labels = labels)
+
+# Separate treatment-effect data frames within this stratum.
+te <- results$analysis_change$all$treatment_effects
+effects <- split(te, te$TREATMENT)
+effects[["Diet"]]
+effects[["Diet + exercise"]]
+```
+
+Codes are categories and are never renumbered. Each analyte is fitted once
+per analysis and stratum with all arms together, then each active arm is
+compared with the shared control at each follow-up. Unequal group sizes are
+supported; multiple follow-ups use arm-by-follow-up interactions. The original
+input data frames are unchanged.
+
+For a fully synthetic example, open
+[`Examples/run_multiarm_example.R`](Examples/run_multiarm_example.R) in RStudio
+and click **Source**, or run its sections in order starting with setup. The
+script finds the pipeline from its own location; your working directory can
+stay where it is. `pheno`, `omics`, `results`, `reports`, `effects_diet`, and
+`effects_diet_exercise` remain in your R workspace for inspection.
+Running individual sections uses `rstudioapi` to locate the open script;
+if it is unavailable, use **Source**.
+
+From an R console, you can also run:
+
+```r
+source("/path/to/Track1.1.1/Examples/run_multiarm_example.R")
 ```
 
 ### Parameters
@@ -83,9 +125,15 @@ reports$all$omics_summary
     additional covariates to include in regression models. Must be
     column names in the `pheno` data frame. These columns must be
     numeric, factor, or logical.
+-   **`treatment_labels`** (named character vector): Labels keyed by every
+    observed `TREATMENT_GROUP` code, including `0`. Required with multiple
+    active arms; optional for binary input, which defaults to `"Control"` and
+    `"Treatment"`. Labels must be unique and nonblank. See
+    [Multiple intervention arms](#multiple-intervention-arms).
 -   **`n_cores`** (integer, optional): Number of cores to use for
     parallelization. Defaults to `NULL`, which auto-detects as
-    `max(1, detectCores() - 1)`. Set to `1` to run serially. Note:
+    `max(1, detectCores() - 1)` and falls back to `1` if detection is unavailable.
+    Set to `1` to run serially. Note:
     `detectCores()` may overcount in HPC/container environments — set
     explicitly if running on a cluster with allocated core limits.
 -   **`checkpoint_dir`** (character, optional): Path to a directory for
@@ -105,12 +153,20 @@ reports$all$omics_summary
 
 ### Return Value
 
-A list with two top-level elements:
+A list containing:
 
 -   **`$analysis_change`**: Change-score analysis (follow-up minus baseline, baseline-adjusted)
 -   **`$analysis_level`**: Level analysis (absolute follow-up, baseline-adjusted)
+-   **`$metadata`**: Result schema and treatment mapping. In
+    `$metadata$treatments`, `ARM` is the input arm code, `TREATMENT` is
+    its display label, `REFERENCE` is the control label, and `CONTRAST` identifies
+    the comparison (`"1_vs_0"`, `"2_vs_0"`, ...).
 
-Each contains results stratified by sex. Male and female results are only generated if both sexes are present in the data:
+Both analyses adjust for the same baseline measurement. On the same data and
+model specification, their treatment contrasts are mathematically identical;
+the baseline coefficient changes between the response parameterizations.
+
+Each analysis contains results stratified by sex. Male and female results are only generated if both sexes are present in the data:
 
 -   **`$all`**: Results from the full dataset
 -   **`$male`**: Results from male subset
@@ -121,18 +177,33 @@ Each stratum contains:
 -   **`$coefficients`**: Data frame of all model coefficients for each
     analyte (ANALYTE_NAME, COEFFICIENT, N_OBS, EFFECT_SIZE, SE, P_VALUE, BH_P_VALUE)
 -   **`$treatment_effects`**: Data frame of treatment effects at each
-    follow-up level (ANALYTE_NAME, FU, EFFECT_SIZE, SE, P_VALUE, BH_P_VALUE)
+    follow-up level and active arm (ANALYTE_NAME, FU, CONTRAST, TREATMENT,
+    REFERENCE, EFFECT_SIZE, SE, P_VALUE, BH_P_VALUE, STATUS).
+
+Use `TREATMENT` to select a named intervention. Original codes are retained in
+the contrast identifiers; `$metadata$treatment_labels` records the full label map.
+Rows for contrasts that cannot be estimated are retained with missing
+estimates and `STATUS = "not_estimable"`; failed fits use `"fit_error"` and
+successful contrasts use `"ok"`. BH correction is performed across
+analytes separately for each contrast and follow-up, within each analysis and
+stratum; the underlying contrast p-values have no cross-arm adjustment.
 
 **DNAm only**: `BH_P_VALUE_FILTERED` is added to `coefficients` and
 `treatment_effects` for a pre-specified filtered probe set (useful for
 assessing significance under different multiple-testing burdens).
+DNAm `treatment_effects` also includes logical `IN_FILTERED_SET`, equal to
+`ANALYTE_NAME %in% filtered_probes`. This records membership even when inference
+is missing: `BH_P_VALUE_FILTERED = NA` alone cannot distinguish a probe outside
+the set from a member with no p-value. Membership is the same for a probe across
+follow-ups, contrasts, analyses, and strata, regardless of `STATUS`. It is added
+after batch assembly and is absent from coefficient tables and non-DNAm results.
 
 ---
 
 ## FAST_omics_WAS_reports()
 
 Generates QC and data summary reports. Takes the same `pheno`, `omics`,
-`omics_type`, and `additional_covariates` arguments as `FAST_omics_WAS()`,
+`omics_type`, `additional_covariates`, and `treatment_labels` arguments as `FAST_omics_WAS()`,
 plus `verbose`, and runs the same input validation, but only produces reports
 — no model fitting. With `verbose = TRUE`, long serial per-analyte report
 steps emit coarse progress milestones.
@@ -153,10 +224,18 @@ reports <- FAST_omics_WAS_reports(
 
 ### Return Value
 
-A list with three top-level elements:
+A list containing:
 
 **`$pheno_summary`** (study-level): Data frame with one row per (FU, FEMALE) cell
 giving N_SUBJECTS, N_CONTROL, N_TREATMENT (subject-level) and N_SAMPLES (row-level).
+`N_TREATMENT` counts all active arms together.
+
+**`$arm_counts`** (study-level): One row per FU × FEMALE × arm, including
+zero-count cells. Columns: FU, FEMALE, ARM, TREATMENT, IS_CONTROL, N_SUBJECTS,
+N_SAMPLES. Use this table for separate intervention counts.
+
+**`$metadata`**: Schema version `"2.0"`, the full `treatment_labels` map, and
+the treatment comparisons used by the reports.
 
 **`$variable_summaries`**: Sex-stratified (`$all`, `$male`, `$female`) omics and
 covariate summaries. Within each stratum, one entry per FU × treatment group cell
@@ -174,6 +253,10 @@ before (COVARIATE_NAME, TYPE, N_NA, SUMMARY).
     chi-squared; factor: chi-squared if min cell count ≥ 5, Fisher's exact
     otherwise (simulated for tables larger than 2×2). Columns: VARIABLE, TYPE,
     TEST, STATISTIC, MIN_CELL_COUNT, P_VALUE, SUMMARY_CONTROL, SUMMARY_TREATMENT.
+
+For multiple active arms, each baseline balance table contains separate
+active-arm-versus-control comparisons identified by `CONTRAST`, `TREATMENT`,
+and `REFERENCE`. Omics balance BH correction is applied within each contrast.
 
 ---
 
@@ -215,9 +298,11 @@ checkpoints/
   ...
 ```
 
-**Important**: checkpoint files are tied to a specific analyte ordering. Do
-not change the `omics` data or `checkpoint_batch_size` between a run and its
-resume — doing so will produce incorrect results.
+Resume with the same input data, model settings, and batch layout. Use a fresh
+checkpoint directory when any of these change or when upgrading across this
+result-schema change. You can change `n_cores` or display labels
+in `treatment_labels` on resume; labels are applied after the batches are
+assembled and do not require refitting.
 
 ## Data Format Requirements
 
@@ -232,8 +317,13 @@ columns**:
 | `SUBJECT_ID`            | Character                | Subject identifier for tracking across follow-ups    | All SUBJECT_ID\*FU pairs must be unique |
 | `FU`                    | Factor                   | Follow-up timepoint                                  | Levels: 0 (baseline), 1..max (follow-ups), consecutive integers |
 | `FEMALE`                | Factor                   | Sex indicator                                        | Levels: 0 (male), 1 (female)            |
-| `TREATMENT_GROUP`        | Factor                   | Treatment assignment                                 | Levels: 0 (control), 1 (treatment)      |
+| `TREATMENT_GROUP`        | Factor or numeric        | Treatment assignment                                 | `0` = control, `1` = treatment          |
 | *Additional Covariates* | *Factor/Numeric/Logical* | *Optional columns for additional analysis variables* | *Any valid values*                      |
+
+If you wish to add additional intervention arms, use codes `2`, `3`, and so on
+in `TREATMENT_GROUP` and supply
+[`treatment_labels`](INPUTS_OUTPUTS.md#treatment_labels) for every group,
+including control.
 
 **Data requirements:**
 
@@ -242,13 +332,14 @@ columns**:
     dropped during validation
 -   Must contain both males (`FEMALE == 0`) and females (`FEMALE == 1`),
     otherwise gender stratification will be skipped
--   Must contain both control (`TREATMENT_GROUP == 0`) and treatment
-    (`TREATMENT_GROUP == 1`) groups
+-   Must contain control (`TREATMENT_GROUP == 0`) and at least one active
+    arm (`TREATMENT_GROUP > 0`)
 -   No duplicate `SAMPLE_ID` values
 -   All `SUBJECT_ID*FU` pairs must be unique
 -   `FU`, `FEMALE`, and `TREATMENT_GROUP` must be factors (or numeric
     values that will be automatically converted to factors)
 -   `FEMALE` and `TREATMENT_GROUP` must be non-missing for all samples
+-   Treatment assignment must remain constant across visits for each subject
 
 **Example structure:**
 
@@ -333,8 +424,15 @@ generate_all_plots(results$analysis_level)                           # optional
 ```
 
 This auto-detects all dimensions of your results (strata, FU levels,
-filtered probes) and outputs multi-page PDFs. For DNAm results, both
+contrasts, filtered probes) and outputs multi-page PDFs with labeled contrast
+pages. For DNAm results, both
 full and filtered probe set plots are generated.
+DNAm plots use `IN_FILTERED_SET` for filtered membership and show labeled empty
+plots when a cell has no available inference.
+
+For a direct `plot_qq()` or `plot_volcano()` call with multiple treatments,
+supply your label, for example `treatment = "Diet"`. With one treatment it is
+selected automatically. `generate_all_plots()` includes all treatments.
 
 Two plot types are produced:
 
@@ -344,6 +442,29 @@ Two plot types are produced:
 
 Requires packages: `qqman`, `ggplot2`.
 
+## Testing
+
+Run these from the repository root. They generate synthetic measurements;
+the DNAm checks use public probe names from the bundled lists. No study data
+or `PracticeData` directory is needed.
+
+```bash
+Rscript --vanilla test_multiarm.R
+Rscript --vanilla test_multiarm_reports.R
+Rscript --vanilla test_dnam_filtered_membership.R
+Rscript --vanilla test_comprehensive.R
+Rscript --vanilla test_parallel_checkpoint.R
+Rscript --vanilla test_resource_paths_and_validation_progress.R
+Rscript --vanilla test_example_execution.R
+```
+
+The checks cover independent joint-model contrasts, unchanged binary estimates,
+missing arms, input validation, BH families, labeled reports/plots/annotations,
+explicit DNAm filtered-set membership despite unavailable inference,
+fresh-session checkpoint resume, and example execution outside the repository
+working directory. The parallel suite also checks a
+5,000-analyte input under a restricted future-globals memory limit.
+
 ## Additional Documentation
 
 -   [Inputs and outputs](INPUTS_OUTPUTS.md): required phenotype and omics
@@ -352,6 +473,18 @@ Requires packages: `qqman`, `ggplot2`.
     for validation, analysis, reporting, batching, and DNAm probe filtering
 -   [Examples](Examples/): small runnable DNAm, proteomics, and
     metabolomics examples with static toy data and saved example results
+
+## Downstream use
+
+Multi-arm support here applies to Track 1.1.1. Track 3.3 and external validation
+need their own adaptations before accepting the combined multi-arm output.
+For a summary-only consumer that supports one comparison, select one named
+treatment and retain its treatment/reference mapping as provenance. Track 3.3
+also needs its outcome model to adjust for the full arm factor: splitting these
+tables alone does not complete the mediation extension. Do not pass the combined
+table as though it contained one treatment effect per analyte and follow-up.
+The CALERIE DunedinPACE covariance helper remains a single-comparison helper
+and now rejects combined contrast tables instead of selecting the first row.
 
 ## Contact
 

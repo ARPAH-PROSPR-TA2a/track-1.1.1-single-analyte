@@ -232,64 +232,17 @@ check_reports_structure <- function(reports, has_covariates = TRUE) {
 cat("Test Suite for main.R\n")
 cat("==========================\n\n")
 
-# Load raw data
-pheno_raw <- readRDS("PracticeData/pheno_example.rds")
-omics_raw <- readRDS("PracticeData/synth_small_betas.rds")
+# Small, deterministic fixtures with both filtered and full-only DNAm probes.
+source("tests/synthetic_data.R")
+fixture <- .make_synthetic_test_data(n_analytes = 16L)
+pheno <- fixture$pheno
+omics <- fixture$omics
+full_probes <- fixture$full_probes
+filtered_probes <- fixture$filtered_probes
 
-# Convert haven_labelled columns if present
-if (any(sapply(pheno_raw, function(x) inherits(x, "haven_labelled")))) {
-  for (col in names(pheno_raw)) {
-    if (inherits(pheno_raw[[col]], "haven_labelled")) {
-      raw_values <- as.vector(pheno_raw[[col]])
-      numeric_attempt <- tryCatch(as.numeric(raw_values), error = function(e) NA)
-      if (!all(is.na(numeric_attempt))) {
-        pheno_raw[[col]] <- numeric_attempt
-      } else {
-        pheno_raw[[col]] <- as.character(raw_values)
-      }
-    }
-  }
-}
-
-# Prepare pheno data
-pheno <- pheno_raw[!duplicated(pheno_raw$SAMPLE_ID), ]
-pheno <- pheno[complete.cases(pheno[, c("SAMPLE_ID", "FU", "SUBJECT_ID", "FEMALE", "TREATMENT_GROUP")]), ]
-
-# Prepare omics data - ensure overlap with both probe lists for DNAm tests
-analyte_names <- rownames(omics_raw)
-sample_names <- colnames(omics_raw)
-omics_full <- as.data.frame(omics_raw)
-colnames(omics_full) <- sample_names
-omics_full <- cbind(ANALYTE_NAME = analyte_names, omics_full, stringsAsFactors = FALSE)
-
-# Load probe lists to ensure test data has overlap with both
-full_probes <- readRDS("Data/FAST_epicv1_epicv2_probe_list.rds")
-filtered_probes <- readRDS("Data/FAST_epicv1_epicv2_sugden_TruD_probe_list.rds")
-
-# Find probes in our data that are in each list
-in_full <- omics_full$ANALYTE_NAME %in% full_probes
-in_filtered <- omics_full$ANALYTE_NAME %in% filtered_probes
-
-cat("Probe overlap in raw data:\n")
-cat("  In full list:     ", sum(in_full), "\n")
-cat("  In filtered list: ", sum(in_filtered), "\n\n")
-
-# Create test subset: 100 from filtered (if available) + 400 from full-only
-filtered_probes_available <- omics_full[in_filtered, ]
-full_only_probes <- omics_full[in_full & !in_filtered, ]
-
-n_filtered <- min(100, nrow(filtered_probes_available))
-n_full_only <- min(400, nrow(full_only_probes))
-
-omics <- rbind(
-  filtered_probes_available[1:n_filtered, ],
-  full_only_probes[1:n_full_only, ]
-)
-
-cat("Test subset created:\n")
-cat("  From filtered list: ", n_filtered, "\n")
-cat("  From full-only:     ", n_full_only, "\n")
-cat("  Total:              ", nrow(omics), "\n\n")
+cat("Synthetic probe coverage:\n")
+cat("  In full list:     ", sum(omics$ANALYTE_NAME %in% full_probes), "\n")
+cat("  In filtered list: ", sum(omics$ANALYTE_NAME %in% filtered_probes), "\n\n")
 
 additional_covariates <- c("agebl", "agevis", "ethnic", "race3", "mbmi")
 
@@ -565,3 +518,5 @@ if (all_pass) {
 } else {
   cat("SOME TESTS FAILED\n")
 }
+
+stopifnot(all_pass)

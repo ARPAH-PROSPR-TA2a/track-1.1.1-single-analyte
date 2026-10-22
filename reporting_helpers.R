@@ -23,11 +23,75 @@
                        pheno_df$FEMALE == report$FEMALE[i], ]
     report$N_SUBJECTS[i]  <- length(unique(cell$SUBJECT_ID))
     report$N_CONTROL[i]   <- length(unique(cell$SUBJECT_ID[cell$TREATMENT_GROUP == 0]))
-    report$N_TREATMENT[i] <- length(unique(cell$SUBJECT_ID[cell$TREATMENT_GROUP == 1]))
+    report$N_TREATMENT[i] <- length(unique(cell$SUBJECT_ID[cell$TREATMENT_GROUP != 0]))
     report$N_SAMPLES[i]   <- nrow(cell)
   }
 
   rownames(report) <- NULL
+  report
+}
+
+
+.report_treatments <- function(pheno_df, treatments = NULL) {
+  if (!is.null(treatments)) return(treatments)
+  arms <- sort(unique(as.character(pheno_df$TREATMENT_GROUP)))
+  arms <- arms[arms != "0"]
+  labels <- if (length(arms) == 1L) "Treatment" else arms
+  data.frame(ARM = arms, TREATMENT = labels, REFERENCE = "Control",
+             CONTRAST = paste0(arms, "_vs_0"), stringsAsFactors = FALSE)
+}
+
+
+.create_arm_counts_report <- function(pheno_df, treatments) {
+  cells <- unique(pheno_df[, c("FU", "FEMALE")])
+  cells <- cells[order(cells$FU, cells$FEMALE), , drop = FALSE]
+  arms <- c("0", as.character(treatments$ARM))
+  labels <- c(as.character(treatments$REFERENCE[1L]), as.character(treatments$TREATMENT))
+  rows <- vector("list", nrow(cells) * length(arms))
+  index <- 0L
+  for (i in seq_len(nrow(cells))) {
+    for (j in seq_along(arms)) {
+      cell <- pheno_df[pheno_df$FU == cells$FU[i] &
+                         pheno_df$FEMALE == cells$FEMALE[i] &
+                         as.character(pheno_df$TREATMENT_GROUP) == arms[j], , drop = FALSE]
+      index <- index + 1L
+      rows[[index]] <- data.frame(
+        FU = cells$FU[i], FEMALE = cells$FEMALE[i], ARM = arms[j],
+        TREATMENT = labels[j], IS_CONTROL = arms[j] == "0",
+        N_SUBJECTS = length(unique(cell$SUBJECT_ID)), N_SAMPLES = nrow(cell),
+        stringsAsFactors = FALSE
+      )
+    }
+  }
+  do.call(rbind, rows)
+}
+
+
+.report_pairwise <- function(pheno_df, treatments, report_function, ...) {
+  treatments <- .report_treatments(pheno_df, treatments)
+  reports <- lapply(seq_len(nrow(treatments)), function(i) {
+    arm <- as.character(treatments$ARM[i])
+    selected <- as.character(pheno_df$TREATMENT_GROUP) %in% c("0", arm)
+    pair <- pheno_df[selected, , drop = FALSE]
+    pair$TREATMENT_GROUP <- factor(
+      ifelse(as.character(pair$TREATMENT_GROUP) == "0", "0", "1"),
+      levels = c("0", "1")
+    )
+    report <- report_function(pair, ...)
+    if (is.null(report)) return(NULL)
+    baseline_groups <- as.character(pair$TREATMENT_GROUP[pair$FU == 0])
+    if (!all(c("0", "1") %in% baseline_groups)) {
+      for (column in intersect(c("P_VALUE", "BH_P_VALUE", "STATISTIC"), names(report))) {
+        report[[column]] <- rep(NA_real_, nrow(report))
+      }
+    }
+    for (column in c("TREATMENT", "REFERENCE", "CONTRAST")) {
+      report[[column]] <- rep(as.character(treatments[[column]][i]), nrow(report))
+    }
+    report
+  })
+  report <- do.call(rbind, reports)
+  if (!is.null(report)) rownames(report) <- NULL
   report
 }
 
@@ -156,7 +220,14 @@
 }
 
 
-.create_pheno_randomization_report <- function(pheno_df, additional_covariates = NULL) {
+.create_pheno_randomization_report <- function(pheno_df, additional_covariates = NULL,
+                                                treatments = NULL) {
+  .report_pairwise(pheno_df, treatments, .create_pairwise_pheno_randomization_report,
+                   additional_covariates = additional_covariates)
+}
+
+
+.create_pairwise_pheno_randomization_report <- function(pheno_df, additional_covariates = NULL) {
 
   # Restrict to baseline
   pheno_baseline <- pheno_df[pheno_df$FU == 0, ]
@@ -274,14 +345,22 @@
 
 
 .create_randomization_report <- function(pheno_df, omics_df, verbose = FALSE,
-                                         progress_every = 100000L) {
+                                         progress_every = 100000L, treatments = NULL) {
+  .report_pairwise(pheno_df, treatments, .create_pairwise_randomization_report,
+                   omics_df = omics_df, verbose = verbose, progress_every = progress_every)
+}
+
+
+.create_pairwise_randomization_report <- function(pheno_df, omics_df, verbose = FALSE,
+                                                  progress_every = 100000L) {
 
   # Filter to baseline (FU=0)
   pheno_baseline <- pheno_df[pheno_df$FU == 0, ]
+  pheno_baseline <- pheno_baseline[pheno_baseline$SAMPLE_ID %in% colnames(omics_df), , drop = FALSE]
 
   # Filter omics to baseline samples
   baseline_sample_ids <- pheno_baseline$SAMPLE_ID
-  omics_baseline <- omics_df[, colnames(omics_df) %in% baseline_sample_ids, drop = FALSE]
+  omics_baseline <- omics_df[, baseline_sample_ids, drop = FALSE]
 
   # Initialize results data.frame
   results <- data.frame(
@@ -316,7 +395,7 @@
 
       # Skip if insufficient samples in either group
       if (length(values_control) < 2 || length(values_treatment) < 2) {
-        return()
+        next
       }
 
       # Calculate statistics
@@ -376,6 +455,12 @@
 .generate_reports <- function(pheno_list, omics_list, additional_covariates = NULL,
                               verbose = FALSE) {
 
+  treatments <- .report_treatments(pheno_list$all, pheno_list$treatments)
+  treatment_labels <- setNames(
+    c(as.character(treatments$REFERENCE[1L]), as.character(treatments$TREATMENT)),
+    c("0", as.character(treatments$ARM))
+  )
+
   # --- Variable summaries: per stratum, per FU x TREATMENT_GROUP cell ---
   variable_summaries <- list(all = NULL, male = NULL, female = NULL)
 
@@ -391,7 +476,7 @@
     omics_df <- omics_list[[dataset]]
 
     fu_levels <- as.character(sort(unique(as.integer(as.character(pheno_df$FU)))))
-    tx_levels <- c("0", "1")
+    tx_levels <- c("0", as.character(treatments$ARM))
 
     cell_reports <- list()
 
@@ -428,12 +513,14 @@
   omics_randomization_report <- .create_randomization_report(
     pheno_list$all,
     omics_list$all,
-    verbose = verbose
+    verbose = verbose,
+    treatments = treatments
   )
   .log_111(verbose, "reports covariate randomization summary (serial)")
   covariate_randomization_report <- .create_pheno_randomization_report(
     pheno_list$all,
-    additional_covariates
+    additional_covariates,
+    treatments = treatments
   )
   randomization_reports <- list(
     omics_report     = omics_randomization_report,
@@ -446,7 +533,9 @@
 
   return(list(
     pheno_summary         = pheno_summary,
+    arm_counts            = .create_arm_counts_report(pheno_list$all, treatments),
     variable_summaries    = variable_summaries,
-    randomization_reports = randomization_reports
+    randomization_reports = randomization_reports,
+    metadata              = list(treatment_labels = treatment_labels, treatments = treatments)
   ))
 }

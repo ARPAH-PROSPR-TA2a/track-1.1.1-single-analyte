@@ -31,6 +31,88 @@ library(ggplot2)
 
 # ===== INDIVIDUAL PLOT FUNCTIONS =====
 
+.select_treatment_effects <- function(treatment_effects, treatment = NULL) {
+  if (is.null(treatment_effects) || nrow(treatment_effects) == 0L) {
+    stop("No treatment effects available to plot")
+  }
+  if (!"CONTRAST" %in% names(treatment_effects)) {
+    if (any(c("TREATMENT", "REFERENCE") %in% names(treatment_effects)) ||
+        anyDuplicated(treatment_effects[, c("ANALYTE_NAME", "FU"), drop = FALSE])) {
+      stop("Missing CONTRAST: treatment labels or repeated analyte/follow-up rows cannot be interpreted as legacy binary results")
+    }
+    treatment_effects$CONTRAST <- "1_vs_0"
+    treatment_effects$TREATMENT <- "Treatment"
+    treatment_effects$REFERENCE <- "Control"
+  }
+  contrasts <- unique(as.character(treatment_effects$CONTRAST))
+  if (anyNA(contrasts) || any(!nzchar(contrasts)) ||
+      anyDuplicated(treatment_effects[, c("ANALYTE_NAME", "FU", "CONTRAST"), drop = FALSE])) {
+    stop("Invalid or duplicate treatment contrast keys")
+  }
+  if (!all(c("TREATMENT", "REFERENCE") %in% names(treatment_effects))) {
+    stop("Contrast results must contain TREATMENT and REFERENCE labels")
+  }
+  for (column in c("TREATMENT", "REFERENCE")) {
+    identities <- split(as.character(treatment_effects[[column]]), treatment_effects$CONTRAST)
+    if (any(vapply(identities, function(x) anyNA(x) || length(unique(x)) != 1L, logical(1)))) {
+      stop("Each CONTRAST must identify exactly one ", column)
+    }
+  }
+  treatments <- unique(as.character(treatment_effects$TREATMENT))
+  if (length(treatments) != length(contrasts)) {
+    stop("Each treatment label must identify exactly one CONTRAST")
+  }
+  if (is.null(treatment)) {
+    if (length(treatments) != 1L) {
+      stop("Multiple treatments are available. Supply treatment = one of: ",
+           paste(treatments, collapse = ", "))
+    }
+    treatment <- treatments[1L]
+  }
+  if (!is.character(treatment) || length(treatment) != 1L || is.na(treatment) ||
+      !treatment %in% treatments) {
+    stop("Unknown treatment. Available treatments: ", paste(treatments, collapse = ", "))
+  }
+  treatment_effects[treatment_effects$TREATMENT == treatment, , drop = FALSE]
+}
+
+
+.treatment_contrast_label <- function(treatment_effects) {
+  if (all(c("TREATMENT", "REFERENCE") %in% names(treatment_effects))) {
+    return(paste0(treatment_effects$TREATMENT[1L], " vs ", treatment_effects$REFERENCE[1L]))
+  }
+  as.character(treatment_effects$CONTRAST[1L])
+}
+
+.treatment_filtered_membership <- function(treatment_effects) {
+  if (is.null(treatment_effects)) return(logical())
+  if ("IN_FILTERED_SET" %in% names(treatment_effects)) {
+    return(treatment_effects$IN_FILTERED_SET %in% TRUE)
+  }
+  # Legacy results encoded membership only through available filtered inference.
+  if ("BH_P_VALUE_FILTERED" %in% names(treatment_effects)) {
+    p <- treatment_effects$BH_P_VALUE_FILTERED
+    return(is.finite(p) & p >= 0 & p <= 1)
+  }
+  rep(FALSE, nrow(treatment_effects))
+}
+
+.treatment_plot_estimable <- function(treatment_effects) {
+  keep <- is.finite(treatment_effects$P_VALUE) & is.finite(treatment_effects$EFFECT_SIZE)
+  if ("STATUS" %in% names(treatment_effects)) {
+    keep <- keep & treatment_effects$STATUS %in% "ok"
+  }
+  keep
+}
+
+.treatment_empty_plot_label <- function(treatment_effects, probe_set) {
+  if (nrow(treatment_effects) == 0L && probe_set == "filtered") {
+    "No probes in filtered set"
+  } else {
+    "No estimable results"
+  }
+}
+
 #' QQ plot of p-values using qqman
 #'
 #' @param results Results object from FAST_omics_WAS
@@ -39,29 +121,38 @@ library(ggplot2)
 #' @param probe_set "full" (all probes) or "filtered" (filtered probes only, DNAm)
 #' @param analysis If passing the full FAST_omics_WAS output, which analysis to plot ("analysis_change" or "analysis_level")
 #' @param title Optional custom title (auto-generated if NULL)
+#' @param treatment Treatment label; required when multiple treatments are present
 plot_qq <- function(results, stratum = "all", fu = 1, probe_set = "full",
-                    analysis = c("analysis_change", "analysis_level"), title = NULL) {
+                    analysis = c("analysis_change", "analysis_level"), title = NULL,
+                    treatment = NULL) {
 
   results <- .coerce_to_strata_results(results, analysis = match.arg(analysis))
 
   te <- results[[stratum]]$treatment_effects
   if (is.null(te)) stop(paste0("No results for stratum '", stratum, "'"))
+  te <- .select_treatment_effects(te, treatment)
 
   # Subset to requested FU
   te <- te[te$FU == fu, ]
   if (nrow(te) == 0) stop(paste0("No results for FU=", fu))
 
-  # Subset to probe set
-  if (probe_set == "filtered") {
-    te <- te[!is.na(te$BH_P_VALUE_FILTERED), ]
-    if (nrow(te) == 0) stop("No filtered probes found")
+  # Preserve the contrast label even when the selected probe set has no members.
+  if (is.null(title)) {
+    title <- paste0("QQ Plot - ", .treatment_contrast_label(te), ", ",
+                    stratum, ", FU=", fu, ", ", probe_set)
   }
 
-  pvals <- te$P_VALUE[!is.na(te$P_VALUE)]
+  # Subset to probe set
+  if (probe_set == "filtered") {
+    te <- te[.treatment_filtered_membership(te), , drop = FALSE]
+  }
 
-  # Auto title
-  if (is.null(title)) {
-    title <- paste0("QQ Plot - ", stratum, ", FU=", fu, ", ", probe_set)
+  pvals <- te$P_VALUE[.treatment_plot_estimable(te)]
+  if (length(pvals) == 0L) {
+    plot.new()
+    title(main = title)
+    text(0.5, 0.5, .treatment_empty_plot_label(te, probe_set))
+    return(invisible(NULL))
   }
 
   qq(pvals, main = title)
@@ -76,18 +167,31 @@ plot_qq <- function(results, stratum = "all", fu = 1, probe_set = "full",
 #' @param p_threshold Significance threshold for coloring (default 0.05, applied to BH)
 #' @param analysis If passing the full FAST_omics_WAS output, which analysis to plot ("analysis_change" or "analysis_level")
 #' @param title Optional custom title (auto-generated if NULL)
+#' @param treatment Treatment label; required when multiple treatments are present
 plot_volcano <- function(results, stratum = "all", fu = 1, probe_set = "full",
-                         p_threshold = 0.05, analysis = c("analysis_change", "analysis_level"), title = NULL) {
+                         p_threshold = 0.05, analysis = c("analysis_change", "analysis_level"), title = NULL,
+                         treatment = NULL) {
   results <- .coerce_to_strata_results(results, analysis = match.arg(analysis))
 
   te <- results[[stratum]]$treatment_effects
   if (is.null(te)) stop(paste0("No results for stratum '", stratum, "'"))
+  te <- .select_treatment_effects(te, treatment)
   te <- te[te$FU == fu, ]
   if (nrow(te) == 0) stop(paste0("No results for FU=", fu))
-  if (probe_set == "filtered") {
-    te <- te[!is.na(te$BH_P_VALUE_FILTERED), ]
-    if (nrow(te) == 0) stop("No filtered probes found")
+  if (is.null(title)) {
+    title <- paste0("Volcano Plot - ", .treatment_contrast_label(te), ", ",
+                    stratum, ", FU=", fu, ", ", probe_set)
   }
+  if (probe_set == "filtered") {
+    te <- te[.treatment_filtered_membership(te), , drop = FALSE]
+  }
+  keep <- .treatment_plot_estimable(te)
+  if (!any(keep)) {
+    return(ggplot() +
+      annotate("text", x = 0, y = 0, label = .treatment_empty_plot_label(te, probe_set)) +
+      labs(title = title) + theme_void())
+  }
+  te <- te[keep, , drop = FALSE]
 
   bh_col <- if (probe_set == "filtered") "BH_P_VALUE_FILTERED" else "BH_P_VALUE"
   sig <- !is.na(te[[bh_col]]) & te[[bh_col]] < p_threshold
@@ -115,10 +219,6 @@ plot_volcano <- function(results, stratum = "all", fu = 1, probe_set = "full",
     "Up"              = paste0("Up")
   )
 
-  if (is.null(title)) {
-    title <- paste0("Volcano Plot - ", stratum, ", FU=", fu, ", ", probe_set)
-  }
-
   ggplot(te, aes(x = EFFECT_SIZE, y = neg_log_p, color = direction)) +
     geom_point(size = 1, alpha = 0.7, na.rm = TRUE) +
     scale_color_manual(values = color_values, labels = color_labels) +
@@ -133,7 +233,7 @@ plot_volcano <- function(results, stratum = "all", fu = 1, probe_set = "full",
 
 #' Generate all QQ and volcano plots for a results object
 #'
-#' Detects strata, FU levels, and DNAm (filtered probes) automatically.
+#' Detects strata, FU levels, treatment contrasts, and DNAm (filtered probes) automatically.
 #' Outputs one PDF per plot type x probe set combination.
 #'
 #' @param results Results object from FAST_omics_WAS
@@ -156,42 +256,61 @@ generate_all_plots <- function(results, figures_dir = NULL, analysis = c("analys
     dir.create(figures_dir, recursive = TRUE)
   }
 
-  # Detect dimensions
+  # Use the cells actually present in each stratum; arms or visits can be absent.
   strata <- c("all", "male", "female")[!sapply(results[c("all", "male", "female")], is.null)]
-  fu_levels <- sort(unique(results[[strata[1]]]$treatment_effects$FU))
-
-  has_filtered <- "BH_P_VALUE_FILTERED" %in% colnames(results[[strata[1]]]$treatment_effects) &&
-    any(!is.na(results[[strata[1]]]$treatment_effects$BH_P_VALUE_FILTERED))
-
+  plot_cells <- lapply(strata, function(stratum) {
+    te <- results[[stratum]]$treatment_effects
+    if (is.null(te) || nrow(te) == 0L) return(NULL)
+    if (!"CONTRAST" %in% names(te)) {
+      # Validate legacy rows before assigning their binary label.
+      te <- .select_treatment_effects(te)
+    }
+    if (!"TREATMENT" %in% names(te)) stop("Contrast results must contain TREATMENT labels")
+    cells <- unique(te[, c("FU", "CONTRAST", "TREATMENT"), drop = FALSE])
+    cells$STRATUM <- stratum
+    cells
+  })
+  plot_cells <- do.call(rbind, plot_cells)
+  if (is.null(plot_cells) || nrow(plot_cells) == 0L) stop("No treatment effects available to plot")
+  has_filtered <- any(vapply(strata, function(stratum) {
+    te <- results[[stratum]]$treatment_effects
+    "IN_FILTERED_SET" %in% names(te) || any(.treatment_filtered_membership(te))
+  }, logical(1)))
   probe_sets <- if (has_filtered) c("full", "filtered") else c("full")
 
   cat("Generating plots:\n")
   cat("  Strata:     ", paste(strata, collapse = ", "), "\n")
-  cat("  FU levels:  ", paste(fu_levels, collapse = ", "), "\n")
+  cat("  FU levels:  ", paste(sort(unique(plot_cells$FU)), collapse = ", "), "\n")
+  cat("  Treatments: ", paste(unique(plot_cells$TREATMENT), collapse = ", "), "\n")
   cat("  Probe sets: ", paste(probe_sets, collapse = ", "), "\n")
 
   for (ps in probe_sets) {
+    # Unavailable inference must not remove a requested contrast/follow-up page.
+    cells <- plot_cells
 
-    # QQ plots — one PDF per probe set, one page per stratum x FU
+    # One PDF per probe set, one page per stratum x FU x contrast.
     qq_file <- file.path(figures_dir, paste0("qq_", ps, ".pdf"))
     pdf(qq_file, width = 7, height = 6)
-    for (s in strata) {
-      for (fu in fu_levels) {
-        plot_qq(results, stratum = s, fu = fu, probe_set = ps)
+    tryCatch({
+      for (i in seq_len(nrow(cells))) {
+        plot_qq(results, stratum = cells$STRATUM[i], fu = cells$FU[i],
+                probe_set = ps, treatment = cells$TREATMENT[i])
       }
-    }
-    dev.off()
+    }, finally = {
+      dev.off()
+    })
     cat("  Saved:", qq_file, "\n")
 
-    # Volcano plots — one PDF per probe set, one page per stratum x FU
     volcano_file <- file.path(figures_dir, paste0("volcano_", ps, ".pdf"))
     pdf(volcano_file, width = 8, height = 6)
-    for (s in strata) {
-      for (fu in fu_levels) {
-        print(plot_volcano(results, stratum = s, fu = fu, probe_set = ps))
+    tryCatch({
+      for (i in seq_len(nrow(cells))) {
+        print(plot_volcano(results, stratum = cells$STRATUM[i], fu = cells$FU[i],
+                           probe_set = ps, treatment = cells$TREATMENT[i]))
       }
-    }
-    dev.off()
+    }, finally = {
+      dev.off()
+    })
     cat("  Saved:", volcano_file, "\n")
   }
 

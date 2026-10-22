@@ -48,6 +48,12 @@
 
 .dpace_extract <- function(results, probes, fu_order) {
   table <- results$treatment_effects
+  if ("CONTRAST" %in% names(table) && length(unique(table$CONTRAST)) > 1L) {
+    stop("DunedinPACE covariance requires a single treatment contrast")
+  }
+  if (anyDuplicated(table[c("ANALYTE_NAME", "FU")])) {
+    stop("DunedinPACE covariance requires unique analyte/FU result keys")
+  }
   expected <- as.vector(outer(
     probes, fu_order, function(probe, fu) paste(probe, fu, sep = "\r")
   ))

@@ -34,6 +34,9 @@
 #     Path to the protein translation table.
 #     Default: "CALERIE_cleaned_protein_translation_table.csv"
 #
+#   treatment:
+#     Optional treatment label; NULL returns every treatment contrast.
+#
 # Output:
 #   A data frame with treatment effects plus protein annotation columns.
 #
@@ -53,7 +56,8 @@ get_annotated_treatment_effects <- function(
     group = "all",
     fu = NULL,
     results_rds = "results_full_Proteomics.rds",
-    translation_csv = "CALERIE_cleaned_protein_translation_table.csv"
+    translation_csv = "CALERIE_cleaned_protein_translation_table.csv",
+    treatment = NULL
 ) {
   analysis_type <- match.arg(
     analysis_type,
@@ -84,6 +88,20 @@ get_annotated_treatment_effects <- function(
   analysis_name <- paste0("analysis_", analysis_type)
   
   treatment_effects <- results[[analysis_name]][[group]]$treatment_effects
+  if (!is.null(treatment)) {
+    available <- if ("TREATMENT" %in% names(treatment_effects)) {
+      unique(as.character(treatment_effects$TREATMENT))
+    } else {
+      "Treatment"
+    }
+    if (!is.character(treatment) || length(treatment) != 1L || is.na(treatment) ||
+        !treatment %in% available) {
+      stop("Unknown treatment. Available treatments: ", paste(available, collapse = ", "))
+    }
+    if ("TREATMENT" %in% names(treatment_effects)) {
+      treatment_effects <- treatment_effects[treatment_effects$TREATMENT == treatment, , drop = FALSE]
+    }
+  }
   
   fu_labels <- c(
     "1" = "3mo",
@@ -133,6 +151,7 @@ get_annotated_treatment_effects <- function(
     "Symbol_Unique",
     "FU",
     "FU_LABEL",
+    intersect(c("TREATMENT", "REFERENCE", "CONTRAST", "STATUS"), names(annotated_df)),
     "EFFECT_SIZE",
     "SE",
     "P_VALUE",
@@ -143,4 +162,3 @@ get_annotated_treatment_effects <- function(
   
   annotated_df
 }
-

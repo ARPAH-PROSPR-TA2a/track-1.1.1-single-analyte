@@ -1,7 +1,7 @@
 # Helper function for NZV detection
 .is_near_zero_variance <- function(x) {
   if (!is.numeric(x)) return(FALSE)
-  if (all(is.na(x))) return(FALSE)
+  if (sum(!is.na(x)) < 2L) return(FALSE)
   var(x, na.rm = TRUE) < 1e-8
 }
 
@@ -30,7 +30,7 @@
 }
 
 
-.validate_pheno <- function(pheno, additional_covariates = NULL) {
+.validate_pheno <- function(pheno, additional_covariates = NULL, treatment_labels = NULL) {
   
   # Step 1: Input validation and conversion
   if (is.matrix(pheno)) {
@@ -42,12 +42,18 @@
   if (!is.null(additional_covariates) && !is.character(additional_covariates)) {
     stop("additional_covariates must be NULL or a character vector")
   }
+  if ("TREATMENT_GROUP" %in% additional_covariates) {
+    stop("Do not include TREATMENT_GROUP in additional_covariates; FAST models it automatically.")
+  }
   
   # Step 2: Required columns check
   required_cols <- c("SAMPLE_ID", "FU", "SUBJECT_ID", "FEMALE", "TREATMENT_GROUP")
   missing_cols <- setdiff(required_cols, names(pheno))
   if (length(missing_cols) > 0) {
     stop("Missing required columns: ", paste(missing_cols, collapse = ", "))
+  }
+  if (anyNA(pheno$SUBJECT_ID) || any(!nzchar(as.character(pheno$SUBJECT_ID)))) {
+    stop("SUBJECT_ID must be non-missing and non-empty.")
   }
   
   # Step 3: Validate required columns (values, then types)
@@ -94,17 +100,9 @@
     pheno$FEMALE <- factor(pheno$FEMALE)
   }
   
-  # TREATMENT_GROUP validation
-  if (!all(pheno$TREATMENT_GROUP %in% 0:1)) {
-    stop("TREATMENT_GROUP must contain only values 0 or 1")
-  }
-  if (!any(pheno$TREATMENT_GROUP == 0) || !any(pheno$TREATMENT_GROUP == 1)) {
-    stop("pheno must contain both control (TREATMENT_GROUP == 0) and treatment (TREATMENT_GROUP == 1)")
-  }
-  if (!is.factor(pheno$TREATMENT_GROUP)) {
-    warning("TREATMENT_GROUP column is not a factor. Converting to factor.")
-    pheno$TREATMENT_GROUP <- factor(pheno$TREATMENT_GROUP)
-  }
+  # Validate arm codes and labels once, before any filtering or stratification.
+  prepared <- .prepare_treatments(pheno, treatment_labels)
+  pheno <- prepared$pheno
   
   # Step 4: Column-specific validation
   if (any(duplicated(pheno$SAMPLE_ID))) {
@@ -194,7 +192,9 @@
     all = pheno,
     male = male_pheno,
     female = female_pheno,
-    requires_mixed_effects = requires_mixed_effects
+    requires_mixed_effects = requires_mixed_effects,
+    treatments = prepared$treatments,
+    treatment_labels = prepared$treatment_labels
   )
 }
 
