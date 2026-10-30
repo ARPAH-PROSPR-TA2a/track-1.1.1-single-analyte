@@ -30,7 +30,8 @@
 }
 
 
-.validate_pheno <- function(pheno, additional_covariates = NULL, treatment_labels = NULL) {
+.validate_pheno <- function(pheno, additional_covariates = NULL, treatment_labels = NULL,
+                            fu_labels = NULL) {
   
   # Step 1: Input validation and conversion
   if (is.matrix(pheno)) {
@@ -90,6 +91,7 @@
     # Normalize factor representation (ensures levels are "0","1",... in order).
     pheno$FU <- factor(fu_num)
   }
+  fu_labels <- .validate_fu_labels(fu_labels, as.character(unique_fu))
   
   # FEMALE validation
   if (!all(pheno$FEMALE %in% 0:1)) {
@@ -194,7 +196,8 @@
     female = female_pheno,
     requires_mixed_effects = requires_mixed_effects,
     treatments = prepared$treatments,
-    treatment_labels = prepared$treatment_labels
+    treatment_labels = prepared$treatment_labels,
+    fu_labels = fu_labels
   )
 }
 

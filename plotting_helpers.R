@@ -84,6 +84,15 @@ library(ggplot2)
   as.character(treatment_effects$CONTRAST[1L])
 }
 
+.followup_plot_label <- function(treatment_effects, fu) {
+  if (!"FU_LABEL" %in% names(treatment_effects)) return(paste0("FU=", fu))
+  labels <- unique(as.character(treatment_effects$FU_LABEL))
+  if (length(labels) != 1L || anyNA(labels) || !nzchar(trimws(labels))) {
+    stop("Each FU must identify exactly one non-blank FU_LABEL")
+  }
+  labels
+}
+
 .treatment_filtered_membership <- function(treatment_effects) {
   if (is.null(treatment_effects)) return(logical())
   if ("IN_FILTERED_SET" %in% names(treatment_effects)) {
@@ -139,7 +148,7 @@ plot_qq <- function(results, stratum = "all", fu = 1, probe_set = "full",
   # Preserve the contrast label even when the selected probe set has no members.
   if (is.null(title)) {
     title <- paste0("QQ Plot - ", .treatment_contrast_label(te), ", ",
-                    stratum, ", FU=", fu, ", ", probe_set)
+                    stratum, ", ", .followup_plot_label(te, fu), ", ", probe_set)
   }
 
   # Subset to probe set
@@ -180,7 +189,7 @@ plot_volcano <- function(results, stratum = "all", fu = 1, probe_set = "full",
   if (nrow(te) == 0) stop(paste0("No results for FU=", fu))
   if (is.null(title)) {
     title <- paste0("Volcano Plot - ", .treatment_contrast_label(te), ", ",
-                    stratum, ", FU=", fu, ", ", probe_set)
+                    stratum, ", ", .followup_plot_label(te, fu), ", ", probe_set)
   }
   if (probe_set == "filtered") {
     te <- te[.treatment_filtered_membership(te), , drop = FALSE]

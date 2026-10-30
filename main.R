@@ -66,6 +66,7 @@
 }
 
 source(file.path(.track111_root, "treatment_helpers.R"), local = TRUE)
+source(file.path(.track111_root, "followup_helpers.R"), local = TRUE)
 source(file.path(.track111_root, "validation_helpers.R"), local = TRUE)
 source(file.path(.track111_root, "reporting_helpers.R"), local = TRUE)
 source(file.path(.track111_root, "analysis_helpers.R"), local = TRUE)
@@ -78,7 +79,8 @@ FAST_omics_WAS <- function(pheno,
                            checkpoint_dir = NULL,
                            checkpoint_batch_size = 2000L,
                            verbose = FALSE,
-                           treatment_labels = NULL) {
+                           treatment_labels = NULL,
+                           fu_labels = NULL) {
 
   analysis_started <- proc.time()[["elapsed"]]
 
@@ -120,7 +122,7 @@ FAST_omics_WAS <- function(pheno,
     dnam_probes <- .load_dnam_probe_lists()
   }
 
-  pheno_list <- .validate_pheno(pheno, additional_covariates, treatment_labels)
+  pheno_list <- .validate_pheno(pheno, additional_covariates, treatment_labels, fu_labels)
   omics_list <- .validate_omics(omics, pheno_list, verbose = verbose)
 
   filtered_probes <- NULL
@@ -162,10 +164,12 @@ FAST_omics_WAS <- function(pheno,
     sprintf("analysis complete (%.1f sec)", proc.time()[["elapsed"]] - analysis_started)
   )
 
+  metadata <- .treatment_metadata(pheno_list$treatments, pheno_list$treatment_labels)
+  if (!is.null(pheno_list$fu_labels)) metadata$fu_labels <- pheno_list$fu_labels
   return(list(
     analysis_change = analysis_change,
     analysis_level  = analysis_level,
-    metadata = .treatment_metadata(pheno_list$treatments, pheno_list$treatment_labels)
+    metadata = metadata
   ))
 }
 
@@ -174,7 +178,8 @@ FAST_omics_WAS_reports <- function(pheno,
                                    omics_type = "Proteomics",
                                    additional_covariates = NULL,
                                    verbose = FALSE,
-                                   treatment_labels = NULL) {
+                                   treatment_labels = NULL,
+                                   fu_labels = NULL) {
 
   reports_started <- proc.time()[["elapsed"]]
   .log_111(verbose, "reports validating inputs (serial)")
@@ -187,7 +192,7 @@ FAST_omics_WAS_reports <- function(pheno,
     dnam_probes <- .load_dnam_probe_lists()
   }
 
-  pheno_list <- .validate_pheno(pheno, additional_covariates, treatment_labels)
+  pheno_list <- .validate_pheno(pheno, additional_covariates, treatment_labels, fu_labels)
   omics_list <- .validate_omics(omics, pheno_list, verbose = verbose)
 
   if (omics_type == "DNAm") {
@@ -204,6 +209,7 @@ FAST_omics_WAS_reports <- function(pheno,
     verbose = verbose
   )
   reports$metadata <- .treatment_metadata(pheno_list$treatments, pheno_list$treatment_labels)
+  if (!is.null(pheno_list$fu_labels)) reports$metadata$fu_labels <- pheno_list$fu_labels
 
   .log_111(
     verbose,

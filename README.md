@@ -111,6 +111,22 @@ From an R console, you can also run:
 source("/path/to/Track1.1.1/Examples/run_multiarm_example.R")
 ```
 
+### Follow-up labels
+
+Keep numeric visit codes in `pheno$FU` and optionally supply labels to either
+public function:
+
+```r
+visits <- c(`0` = "Baseline", `1` = "12mo", `2` = "24mo")
+results <- FAST_omics_WAS(pheno, omics, fu_labels = visits)
+reports <- FAST_omics_WAS_reports(pheno, omics, fu_labels = visits)
+```
+
+The map must cover exactly the observed FU codes, including `0`, with unique,
+nonblank labels. `FU == 0` remains baseline; labels and their mapping order do
+not change the model reference or visit order. The default `fu_labels = NULL`
+preserves existing output names and columns.
+
 ### Parameters
 
 -   **`pheno`** (data.frame): Phenotype data with required columns (see
@@ -130,6 +146,9 @@ source("/path/to/Track1.1.1/Examples/run_multiarm_example.R")
     active arms; optional for binary input, which defaults to `"Control"` and
     `"Treatment"`. Labels must be unique and nonblank. See
     [Multiple intervention arms](#multiple-intervention-arms).
+-   **`fu_labels`** (named character vector, optional): Follow-up labels keyed
+    by every observed `FU` code, including baseline `0`. Default: `NULL`.
+    See [Follow-up labels](#follow-up-labels).
 -   **`n_cores`** (integer, optional): Number of cores to use for
     parallelization. Defaults to `NULL`, which auto-detects as
     `max(1, detectCores() - 1)` and falls back to `1` if detection is unavailable.
@@ -180,6 +199,12 @@ Each stratum contains:
     follow-up level and active arm (ANALYTE_NAME, FU, CONTRAST, TREATMENT,
     REFERENCE, EFFECT_SIZE, SE, P_VALUE, BH_P_VALUE, STATUS).
 
+When `fu_labels` is supplied, treatment-effect tables add `FU_LABEL` beside
+`FU`, and coefficient names use the labels: `FU2` becomes `FU24mo`, and
+`TREATMENT_GROUP1:FU2` becomes `TREATMENT_GROUP1:FU24mo`. The full mapping is
+stored in `$metadata$fu_labels`. Labels are applied after inference and all
+BH corrections, so numerical results are unchanged.
+
 Use `TREATMENT` to select a named intervention. Original codes are retained in
 the contrast identifiers; `$metadata$treatment_labels` records the full label map.
 Rows for contrasts that cannot be estimated are retained with missing
@@ -203,7 +228,7 @@ after batch assembly and is absent from coefficient tables and non-DNAm results.
 ## FAST_omics_WAS_reports()
 
 Generates QC and data summary reports. Takes the same `pheno`, `omics`,
-`omics_type`, `additional_covariates`, and `treatment_labels` arguments as `FAST_omics_WAS()`,
+`omics_type`, `additional_covariates`, `treatment_labels`, and `fu_labels` arguments as `FAST_omics_WAS()`,
 plus `verbose`, and runs the same input validation, but only produces reports
 — no model fitting. With `verbose = TRUE`, long serial per-analyte report
 steps emit coarse progress milestones.
@@ -234,8 +259,11 @@ giving N_SUBJECTS, N_CONTROL, N_TREATMENT (subject-level) and N_SAMPLES (row-lev
 zero-count cells. Columns: FU, FEMALE, ARM, TREATMENT, IS_CONTROL, N_SUBJECTS,
 N_SAMPLES. Use this table for separate intervention counts.
 
+With `fu_labels`, both count tables add `FU_LABEL` beside `FU`. Report list
+keys such as `omics_FU1_Tx0` retain their numeric codes.
+
 **`$metadata`**: Schema version `"2.0"`, the full `treatment_labels` map, and
-the treatment comparisons used by the reports.
+the treatment comparisons used by the reports. Includes `fu_labels` when supplied.
 
 **`$variable_summaries`**: Sex-stratified (`$all`, `$male`, `$female`) omics and
 covariate summaries. Within each stratum, one entry per FU × treatment group cell
@@ -301,8 +329,8 @@ checkpoints/
 Resume with the same input data, model settings, and batch layout. Use a fresh
 checkpoint directory when any of these change or when upgrading across this
 result-schema change. You can change `n_cores` or display labels
-in `treatment_labels` on resume; labels are applied after the batches are
-assembled and do not require refitting.
+in `treatment_labels` or `fu_labels` on resume; labels are applied after the
+batches are assembled and do not require refitting.
 
 ## Data Format Requirements
 
@@ -433,6 +461,10 @@ plots when a cell has no available inference.
 For a direct `plot_qq()` or `plot_volcano()` call with multiple treatments,
 supply your label, for example `treatment = "Diet"`. With one treatment it is
 selected automatically. `generate_all_plots()` includes all treatments.
+
+When results contain `FU_LABEL`, plot titles display the supplied visit label.
+Direct plot calls still select visits by numeric code, e.g. `fu = 2`; older
+results without labels retain their existing titles.
 
 Two plot types are produced:
 

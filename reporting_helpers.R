@@ -530,10 +530,15 @@
   # --- Pheno summary: study-level ---
   .log_111(verbose, "reports phenotype summary (serial)")
   pheno_summary <- .create_pheno_data_report(pheno_list$all)
+  arm_counts <- .create_arm_counts_report(pheno_list$all, treatments)
+  if (!is.null(pheno_list$fu_labels)) {
+    pheno_summary <- .attach_fu_labels(pheno_summary, pheno_list$fu_labels)
+    arm_counts <- .attach_fu_labels(arm_counts, pheno_list$fu_labels)
+  }
 
   return(list(
     pheno_summary         = pheno_summary,
-    arm_counts            = .create_arm_counts_report(pheno_list$all, treatments),
+    arm_counts            = arm_counts,
     variable_summaries    = variable_summaries,
     randomization_reports = randomization_reports,
     metadata              = list(treatment_labels = treatment_labels, treatments = treatments)

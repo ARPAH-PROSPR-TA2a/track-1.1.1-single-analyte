@@ -115,6 +115,37 @@ is returned in `$metadata$treatment_labels`.
 
 ---
 
+### `fu_labels`
+
+Optional named character vector accepted by both public functions. Keep
+numeric visit codes in `pheno$FU` and supply their display labels separately:
+
+```r
+fu_labels = c(`0` = "Baseline", `1` = "12mo", `2` = "24mo")
+```
+
+Keys must match exactly the FU codes observed in the full phenotype input,
+including baseline `0`, before filtering or stratification. Keys and labels
+must be unique, nonblank, and nonmissing. The existing consecutive-code
+requirement remains in effect. Labels and mapping order do not change the
+baseline, follow-up reference, or visit order.
+
+With labels supplied, treatment-effect tables and the reports' `pheno_summary`
+and `arm_counts` tables add `FU_LABEL` beside `FU`. Coefficient names use the
+visit labels, and plot titles display them; numeric plot selectors such as
+`fu = 2` still work. Report list keys such as `omics_FU1_Tx0` stay unchanged.
+The normalized full map is returned in `$metadata$fu_labels`.
+
+Coefficient renaming follows R's factor naming: visit-based terms acquire
+labels, while sum/Helmert contrast indices retain their names. Labels that
+collide with additional-covariate coefficient names are rejected.
+
+The default `NULL` preserves existing output names and columns. Labeling is
+applied after inference and all BH corrections, including when loading cached
+batches, and leaves numerical results unchanged.
+
+---
+
 ### `n_cores` *(FAST_omics_WAS only)*
 
 Integer. Number of cores to use for parallelizing the per-analyte model fits.
@@ -144,8 +175,8 @@ checkpoint_dir/
 Resume with the same input data, model settings, and batch layout. Use a fresh
 checkpoint directory when any of these change or when upgrading across this
 result-schema change. You can change `n_cores` or display labels
-in `treatment_labels` on resume; labels are applied after the batches are
-assembled and do not require refitting.
+in `treatment_labels` or `fu_labels` on resume; labels are applied after the
+batches are assembled and do not require refitting.
 
 ---
 
@@ -266,6 +297,12 @@ protein_B      bmi                  0.003          0.004    0.488     0.712
 | `BH_P_VALUE` | Benjamini-Hochberg corrected p-value, applied separately within each `COEFFICIENT` group across all analytes (e.g., all `TREATMENT_GROUP1` p-values are corrected together) |
 | `BH_P_VALUE_FILTERED` | *(DNAm only)* BH correction applied only within the filtered probe set for probes in that set; `NA` for all other probes. See [DNAm Filtered BH](#dnam-filtered-bh) |
 
+With the example `fu_labels` map above, the existing `COEFFICIENT` column
+uses `FU24mo` instead of `FU2` and
+`TREATMENT_GROUP1:FU24mo` instead of `TREATMENT_GROUP1:FU2`. Under the default
+coding, `12mo` is the reference follow-up and has no separate FU coefficient.
+There is no additional coefficient-label column.
+
 ---
 
 ### `$treatment_effects`
@@ -312,6 +349,7 @@ protein_C      2    0.198          0.077    0.011     0.044
 |:---|:---|
 | `ANALYTE_NAME` | Identifier for the analyte |
 | `FU` | Follow-up timepoint at which the contrast is evaluated |
+| `FU_LABEL` | *(When `fu_labels` is supplied)* Display label for the FU code |
 | `CONTRAST` | Stable comparison identifier built from input codes, e.g. `1_vs_0` or `2_vs_0` |
 | `TREATMENT` | Active-arm display label; `"Treatment"` for the default binary call |
 | `REFERENCE` | Control display label; `"Control"` for the default binary call |
@@ -330,6 +368,8 @@ normalized full `treatment_labels` map, and a `treatments` data frame containing
 `ARM` (original active code), `TREATMENT` (active label), `REFERENCE` (control
 label), and `CONTRAST` (code-based identifier). Metadata also records the BH
 correction policy. Preserve the mapping alongside any exported table.
+When follow-up labels are supplied, `fu_labels` contains the full visit map,
+including baseline.
 
 ---
 
@@ -340,6 +380,7 @@ correction policy. Preserve the mapping alongside any exported table.
 Study-level table with one row per `(FU, FEMALE)` cell. `N_SUBJECTS`,
 `N_CONTROL`, and `N_TREATMENT` count unique subjects; `N_SAMPLES` counts rows.
 `N_TREATMENT` includes all active arms. Use `$arm_counts` for individual arms.
+When `fu_labels` is supplied, `FU_LABEL` appears beside `FU`.
 
 ### `$arm_counts`
 
@@ -348,6 +389,7 @@ One row per FU × FEMALE × arm, including zero-count cells.
 | Column | Description |
 |:---|:---|
 | `FU`, `FEMALE` | Visit and sex cell |
+| `FU_LABEL` | *(When `fu_labels` is supplied)* Display label for the FU code |
 | `ARM` | Original input code: `0` control, positive codes for active arms |
 | `TREATMENT` | Display label from `treatment_labels`, including the control label |
 | `IS_CONTROL` | Whether this is the shared control arm |

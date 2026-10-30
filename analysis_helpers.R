@@ -740,5 +740,20 @@
     outputs <- .add_filtered_bh_correction(outputs, filtered_probes)
   }
 
+  # Apply presentation labels only after inference (including filtered BH).
+  # Batch checkpoints continue to store the original numeric visit codes.
+  if (!is.null(pheno_list$fu_labels)) {
+    for (dataset in names(outputs)) {
+      if (is.null(outputs[[dataset]])) next
+      outputs[[dataset]]$treatment_effects <- .attach_fu_labels(
+        outputs[[dataset]]$treatment_effects, pheno_list$fu_labels
+      )
+      outputs[[dataset]]$coefficients <- .label_fu_coefficients(
+        outputs[[dataset]]$coefficients, pheno_list[[dataset]],
+        pheno_list$fu_labels, additional_covariates
+      )
+    }
+  }
+
   return(outputs)
 }
