@@ -95,6 +95,356 @@ empty_report <- .report_pairwise(binary_pheno, treatments,
 stopifnot(nrow(empty_report) == 0L,
           all(c("TREATMENT", "REFERENCE", "CONTRAST") %in% names(empty_report)))
 
+local({
+  # Frozen pre-allocation implementations. Keep these independent of the live
+  # helpers so optimizations must preserve historical values and R attributes.
+  original_summary <- function(sample_ids, omics_df, verbose = FALSE,
+                                        progress_label = "reports variable summary",
+                                        progress_every = 100000L) {
+
+    analyte_names <- omics_df$ANALYTE_NAME
+
+    omics_numeric <- omics_df[, setdiff(names(omics_df), "ANALYTE_NAME"), drop = FALSE]
+    omics_numeric <- omics_numeric[, colnames(omics_numeric) %in% sample_ids, drop = FALSE]
+
+    # Initialize results data.frame
+    report <- data.frame(
+      ANALYTE_NAME = analyte_names,
+      N_NONMISSING = NA_integer_,
+      MEAN = NA_real_,
+      MEDIAN = NA_real_,
+      SD = NA_real_,
+      MIN = NA_real_,
+      MAX = NA_real_,
+      stringsAsFactors = FALSE
+    )
+
+    .log_111(
+      verbose,
+      paste0(progress_label, ": 0/", length(analyte_names), " analytes (serial)")
+    )
+
+    # Calculate per-analyte statistics
+    for (i in seq_along(analyte_names)) {
+      analyte_values <- as.numeric(omics_numeric[i, ])
+
+      report$N_NONMISSING[i] <- sum(!is.na(analyte_values))
+      report$MEAN[i] <- mean(analyte_values, na.rm = TRUE)
+      report$MEDIAN[i] <- median(analyte_values, na.rm = TRUE)
+      report$SD[i] <- sd(analyte_values, na.rm = TRUE)
+      report$MIN[i] <- min(analyte_values, na.rm = TRUE)
+      report$MAX[i] <- max(analyte_values, na.rm = TRUE)
+
+      if (i %% progress_every == 0L || i == length(analyte_names)) {
+        .log_111(
+          verbose,
+          paste0(progress_label, ": ", i, "/", length(analyte_names), " analytes")
+        )
+      }
+    }
+
+    return(report)
+  }
+
+  original_randomization <- function(pheno_df, omics_df, verbose = FALSE,
+                                                    progress_every = 100000L) {
+
+    # Filter to baseline (FU=0)
+    pheno_baseline <- pheno_df[pheno_df$FU == 0, ]
+    pheno_baseline <- pheno_baseline[pheno_baseline$SAMPLE_ID %in% colnames(omics_df), , drop = FALSE]
+
+    # Filter omics to baseline samples
+    baseline_sample_ids <- pheno_baseline$SAMPLE_ID
+    omics_baseline <- omics_df[, baseline_sample_ids, drop = FALSE]
+
+    # Initialize results data.frame
+    results <- data.frame(
+      ANALYTE_NAME = character(),
+      MEAN_DIFFERENCE = numeric(),
+      COHENS_D = numeric(),
+      SE = numeric(),
+      P_VALUE = numeric(),
+      stringsAsFactors = FALSE
+    )
+
+    # T-test per analyte
+    analyte_names <- omics_df$ANALYTE_NAME
+    .log_111(
+      verbose,
+      paste0("reports randomization: 0/", length(analyte_names), " analytes (serial)")
+    )
+
+    for (i in seq_along(analyte_names)) {
+      tryCatch({
+        # Extract values for this analyte
+        analyte_values <- as.numeric(omics_baseline[i, ])
+        control_status <- pheno_baseline$TREATMENT_GROUP
+
+        # Split by group
+        values_control <- analyte_values[control_status == 0]
+        values_treatment <- analyte_values[control_status == 1]
+
+        # Remove NAs
+        values_control <- na.omit(values_control)
+        values_treatment <- na.omit(values_treatment)
+
+        # Skip if insufficient samples in either group
+        if (length(values_control) < 2 || length(values_treatment) < 2) {
+          next
+        }
+
+        # Calculate statistics
+        n_control <- length(values_control)
+        n_treatment <- length(values_treatment)
+        mean_control <- mean(values_control)
+        mean_treatment <- mean(values_treatment)
+        var_control <- var(values_control)
+        var_treatment <- var(values_treatment)
+
+        # Mean difference (Treatment - Control)
+        mean_diff <- mean_treatment - mean_control
+
+        # Standard Error (Welch's approach - doesn't assume equal variances)
+        se <- sqrt((var_control / n_control) + (var_treatment / n_treatment))
+
+        # Cohen's d (using pooled SD)
+        pooled_sd <- sqrt(((n_control - 1) * var_control + (n_treatment - 1) * var_treatment) /
+                            (n_control + n_treatment - 2))
+        cohens_d <- mean_diff / pooled_sd
+
+        # Welch's t-test
+        tt <- t.test(values_treatment, values_control, var.equal = FALSE)
+
+        # Add to results
+        results <- rbind(results, data.frame(
+          ANALYTE_NAME = analyte_names[i],
+          MEAN_DIFFERENCE = mean_diff,
+          COHENS_D = cohens_d,
+          SE = se,
+          P_VALUE = tt$p.value,
+          stringsAsFactors = FALSE
+        ))
+
+      }, error = function(e) {
+        warning("Error processing analyte '", analyte_names[i], "': ", e$message)
+      })
+
+      if (i %% progress_every == 0L || i == length(analyte_names)) {
+        .log_111(
+          verbose,
+          paste0("reports randomization: ", i, "/", length(analyte_names), " analytes")
+        )
+      }
+    }
+
+    # Apply multiple testing correction (global across all analytes)
+    if (nrow(results) > 0) {
+      results$BH_P_VALUE <- p.adjust(results$P_VALUE, method = "BH")
+      return(results)
+    } else {
+      return(NULL)
+    }
+  }
+
+  # Capture interleaved warnings and progress, as well as errors, without changing
+  # the helpers' control flow. identical() checks types, attributes and row order.
+  capture_report <- function(expr) {
+    events <- list()
+    error <- NULL
+    value <- tryCatch(withCallingHandlers(force(expr),
+      warning = function(w) {
+        events[[length(events) + 1L]] <<- list("warning", conditionMessage(w), class(w))
+        invokeRestart("muffleWarning")
+      },
+      message = function(m) {
+        events[[length(events) + 1L]] <<- list("message", conditionMessage(m), class(m))
+        invokeRestart("muffleMessage")
+      }), error = function(e) {
+        error <<- list(conditionMessage(e), class(e))
+        NULL
+      })
+    list(value = value, events = events, error = error)
+  }
+  expect_same_report <- function(current, original) {
+    stopifnot(identical(current, original))
+    current
+  }
+  event_text <- function(captured, type) {
+    vapply(Filter(function(x) identical(x[[1L]], type), captured$events),
+           function(x) x[[2L]], character(1L))
+  }
+  in_environment <- function(fun, env) {
+    environment(fun) <- env
+    fun
+  }
+  original <- new.env(parent = environment())
+  current <- new.env(parent = environment())
+  for (env in list(original, current)) {
+    env$.log_111 <- function(verbose, text) {
+      if (isTRUE(verbose)) message("[1.1.1] ", text)
+      invisible(NULL)
+    }
+    env$.generate_reports <- in_environment(.generate_reports, env)
+    env$.create_randomization_report <- in_environment(.create_randomization_report, env)
+  }
+  original$.create_omics_data_report <- in_environment(original_summary, original)
+  original$.create_pairwise_randomization_report <- in_environment(original_randomization, original)
+  current$.create_omics_data_report <- in_environment(.create_omics_data_report, current)
+  current$.create_pairwise_randomization_report <- in_environment(.create_pairwise_randomization_report, current)
+
+  # structure() preserves names on the ID column, unlike data.frame(). This is a
+  # valid input whose historical row-name behavior also belongs to the contract.
+  make_omics <- function(ids, columns) {
+    stopifnot(length(ids) == nrow(columns))
+    structure(c(list(ANALYTE_NAME = ids), as.list(columns)),
+              class = "data.frame", row.names = seq_along(ids))
+  }
+  compare_summary <- function(omics, samples = names(omics)[-1L], progress_every = 1000L) {
+    expect_same_report(
+      capture_report(current$.create_omics_data_report(samples, omics, verbose = TRUE,
+                     progress_label = "parity summary", progress_every = progress_every)),
+      capture_report(original$.create_omics_data_report(samples, omics, verbose = TRUE,
+                     progress_label = "parity summary", progress_every = progress_every)))
+  }
+
+  # Cross both 2,000-row chunk boundaries, including missing and nonfinite rows.
+  n <- 4003L
+  summary_columns <- data.frame(s1 = seq_len(n), s2 = sin(seq_len(n)),
+                                s3 = cos(seq_len(n)), s4 = seq_len(n) %% 3L == 0L)
+  summary_columns[c(1999L, 2000L, 4000L), ] <- NA_real_
+  summary_columns[2001L, ] <- c(Inf, -Inf, NaN, NA_real_)
+  summary_columns[4001L, ] <- c(NaN, 2, NA_real_, 4)
+  summary_omics <- make_omics(rep(c("same", "other"), length.out = n), summary_columns)
+  summary_result <- compare_summary(summary_omics)
+  stopifnot(is.null(summary_result$error), nrow(summary_result$value) == n,
+            identical(summary_result$value$N_NONMISSING[c(1999L, 2000L, 4000L, 4001L)],
+                      c(0L, 0L, 0L, 2L)),
+            length(event_text(summary_result, "warning")) == 6L,
+            identical(event_text(summary_result, "message"), paste0(
+              "[1.1.1] parity summary: ", c("0/4003 analytes (serial)",
+              "1000/4003 analytes", "2000/4003 analytes", "3000/4003 analytes",
+              "4000/4003 analytes", "4003/4003 analytes"), "\n")))
+  small_columns <- data.frame(s1 = c(1L, 4L, NA_integer_), s2 = c(2L, 6L, 8L),
+                              s3 = c(1.5, NaN, Inf), s4 = c(TRUE, FALSE, TRUE))
+  identifiers <- list(
+    duplicate = c("same", "same", "third"),
+    factor = factor(c("b", "a", "b"), levels = c("unused", "b", "a")),
+    integer = c(10L, 10L, 30L), numeric = c(1.5, 1.5, 3.5),
+    named = setNames(c("same", "same", "third"), c("x", "x", "x1")))
+  for (ids in identifiers) {
+    small_omics <- make_omics(ids, small_columns)
+    compare_summary(small_omics)
+    one_sample <- compare_summary(small_omics, "s1", progress_every = 1L)
+    stopifnot(is.null(one_sample$error), all(is.na(one_sample$value$SD)))
+    no_samples <- compare_summary(small_omics, "absent", progress_every = 1L)
+    stopifnot(is.null(no_samples$error), all(no_samples$value$N_NONMISSING == 0L),
+              all(is.nan(no_samples$value$MEAN)), all(is.na(no_samples$value$SD)),
+              identical(no_samples$value$MIN, rep(Inf, 3L)),
+              identical(no_samples$value$MAX, rep(-Inf, 3L)),
+              length(event_text(no_samples, "warning")) == 6L)
+  }
+  # The historical zero-row constructor errors before it emits any progress.
+  empty <- compare_summary(make_omics(character(), small_columns[FALSE, ]))
+  stopifnot(!is.null(empty$error), length(empty$events) == 0L)
+
+  # Baseline phenotype order deliberately differs from the omics column order;
+  # extra follow-up and absent samples must never enter the baseline comparison.
+  sample_names <- paste0("baseline-", seq_len(8L))
+  random_pheno <- data.frame(
+    SAMPLE_ID = c(sample_names, "follow-up", "absent"),
+    FU = factor(c(rep(0L, 8L), 1L, 0L)),
+    TREATMENT_GROUP = factor(c(rep(0L, 4L), rep(1L, 4L), 1L, 0L)))
+  random_pheno <- random_pheno[c(7L, 2L, 5L, 4L, 1L, 8L, 3L, 6L, 9L, 10L), ]
+  compare_randomization <- function(omics, phenotype = random_pheno, progress_every = 1000L) {
+    expect_same_report(
+      capture_report(current$.create_pairwise_randomization_report(
+        phenotype, omics, verbose = TRUE, progress_every = progress_every)),
+      capture_report(original$.create_pairwise_randomization_report(
+        phenotype, omics, verbose = TRUE, progress_every = progress_every)))
+  }
+  n <- 2003L
+  random_values <- outer(seq_len(n) / 100, c(0.1, 0.2, 0.3, 0.4, 0.2, 0.4, 0.6, 0.8)) +
+    matrix(rep(c(1, 2, 4, 5, 1, 3, 5, 9), each = n), nrow = n)
+  random_values[2L, 1:3] <- NA_real_                 # insufficient control samples
+  random_values[3L, ] <- 1                         # t.test: essentially constant
+  random_values[4L, 1L] <- Inf                     # t.test: nonfinite input
+  random_values[5L, c(1L, 5L)] <- c(NA_real_, NaN)  # still estimable
+  random_values[1000L, ] <- 1                      # error still emits progress
+  random_values[n, 5:7] <- NA_real_                # final skip emits no progress
+  random_columns <- as.data.frame(random_values)
+  names(random_columns) <- sample_names
+  random_columns$`follow-up` <- -999
+  random_columns$unused <- 999
+  random_columns <- random_columns[, rev(names(random_columns)), drop = FALSE]
+  random_omics <- make_omics(paste0("analyte-", seq_len(n)), random_columns)
+  randomized <- compare_randomization(random_omics)
+  stopifnot(is.null(randomized$error), nrow(randomized$value) == n - 5L,
+            length(event_text(randomized, "warning")) == 3L,
+            identical(event_text(randomized, "message"), paste0(
+              "[1.1.1] reports randomization: ",
+              c("0/2003 analytes (serial)", "1000/2003 analytes", "2000/2003 analytes"), "\n")),
+            identical(randomized$value$BH_P_VALUE,
+                      p.adjust(randomized$value$P_VALUE, method = "BH")))
+  # Independently check the direction, Welch SE/test and pooled-SD effect size.
+  for (row in c(1L, 5L, 2000L, 2002L)) {
+    control <- na.omit(random_values[row, 1:4])
+    treated <- na.omit(random_values[row, 5:8])
+    nc <- length(control)
+    nt <- length(treated)
+    difference <- mean(treated) - mean(control)
+    pooled <- sqrt(((nc - 1L) * var(control) + (nt - 1L) * var(treated)) / (nc + nt - 2L))
+    result <- randomized$value[randomized$value$ANALYTE_NAME == paste0("analyte-", row), ]
+    # Phenotype order changes summation order, so the independent calculation is
+    # compared numerically; the frozen implementation comparison above is exact.
+    stopifnot(isTRUE(all.equal(result$MEAN_DIFFERENCE, difference)),
+              isTRUE(all.equal(result$SE, sqrt(var(control) / nc + var(treated) / nt))),
+              isTRUE(all.equal(result$COHENS_D, difference / pooled)),
+              isTRUE(all.equal(result$P_VALUE, t.test(treated, control, var.equal = FALSE)$p.value)))
+  }
+  for (ids in identifiers) {
+    successful <- make_omics(ids, random_columns[c(1L, 6L, 7L), ])
+    checked <- compare_randomization(successful, progress_every = 1L)
+    stopifnot(is.null(checked$error), nrow(checked$value) == 3L,
+              identical(class(checked$value$ANALYTE_NAME), class(ids)))
+    if (!is.null(names(ids))) {
+      stopifnot(identical(rownames(checked$value), c("x", "x1", "x11")))
+    }
+  }
+  # Names attached to the ID vector can also cause per-row construction errors.
+  for (id_names in list(c("", "x", "y"), c(NA_character_, "x", "y"))) {
+    compare_randomization(make_omics(setNames(c("a", "b", "c"), id_names),
+                                    random_columns[c(1L, 6L, 7L), ]), progress_every = 1L)
+  }
+  all_skipped <- compare_randomization(make_omics(c("low-n", "also-low-n"),
+                                                  random_columns[c(2L, n), ]), progress_every = 1L)
+  stopifnot(is.null(all_skipped$value), is.null(all_skipped$error),
+            length(event_text(all_skipped, "warning")) == 0L,
+            identical(event_text(all_skipped, "message"),
+                      "[1.1.1] reports randomization: 0/2 analytes (serial)\n"))
+  all_failed <- compare_randomization(make_omics(c("constant", "nonfinite"),
+                                                 random_columns[c(3L, 4L), ]), progress_every = 1L)
+  stopifnot(is.null(all_failed$value), is.null(all_failed$error),
+            length(event_text(all_failed, "warning")) == 2L,
+            length(event_text(all_failed, "message")) == 3L)
+  no_analytes <- compare_randomization(make_omics(character(), random_columns[FALSE, ]))
+  stopifnot(is.null(no_analytes$value), is.null(no_analytes$error))
+
+  # Exercise the existing public report assembly with both arm configurations,
+  # both visits, all sex strata, covariates, and missing per-arm analyte values.
+  binary_strata <- list(all = binary_pheno,
+                        male = binary_pheno[binary_pheno$FEMALE == "0", ],
+                        female = binary_pheno[binary_pheno$FEMALE == "1", ])
+  for (phenotypes in list(binary_strata, pheno_list)) {
+    assembled <- expect_same_report(
+      capture_report(current$.generate_reports(phenotypes, omics_list, c("age", "smoker"), verbose = TRUE)),
+      capture_report(original$.generate_reports(phenotypes, omics_list, c("age", "smoker"), verbose = TRUE)))
+    stopifnot(is.null(assembled$error),
+              all(vapply(assembled$value$variable_summaries,
+                         function(x) all(c("omics_FU0_Tx0", "omics_FU1_Tx1") %in% names(x)), logical(1L))))
+  }
+  cat("PASS: exact reporting allocation parity, conditions, progress and public assembly\n")
+})
+
 effects <- data.frame(
   ANALYTE_NAME = rep(c("protein-1", "protein-2"), 2L), FU = 1L,
   TREATMENT = rep(treatments$TREATMENT, each = 2L), REFERENCE = "Usual care",

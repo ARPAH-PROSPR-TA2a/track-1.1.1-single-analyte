@@ -236,6 +236,11 @@ steps emit coarse progress milestones.
 Separating reports from analysis allows long-running analyses to be
 parallelized and checkpointed without re-running reporting, and vice versa.
 
+Large variable-summary tables are processed in blocks of 2,000 analytes to
+limit temporary memory use. Summary and baseline-balance outputs are
+preallocated to avoid repeated copying as the reports grow. Report generation
+remains serial, with the same statistics, output layout, and progress milestones.
+
 ### Quick Example
 
 ``` r

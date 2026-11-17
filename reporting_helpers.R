@@ -117,30 +117,55 @@
     stringsAsFactors = FALSE
   )
 
+  # Fill standalone vectors, then assign each completed column once. Updating
+  # report$COLUMN[i] repeatedly copies the full column for every analyte.
+  n_nonmissing <- report$N_NONMISSING
+  means <- report$MEAN
+  medians <- report$MEDIAN
+  sds <- report$SD
+  minima <- report$MIN
+  maxima <- report$MAX
+
   .log_111(
     verbose,
     paste0(progress_label, ": 0/", length(analyte_names), " analytes (serial)")
   )
   
-  # Calculate per-analyte statistics
-  for (i in seq_along(analyte_names)) {
-    analyte_values <- as.numeric(omics_numeric[i, ])
-    
-    report$N_NONMISSING[i] <- sum(!is.na(analyte_values))
-    report$MEAN[i] <- mean(analyte_values, na.rm = TRUE)
-    report$MEDIAN[i] <- median(analyte_values, na.rm = TRUE)
-    report$SD[i] <- sd(analyte_values, na.rm = TRUE)
-    report$MIN[i] <- min(analyte_values, na.rm = TRUE)
-    report$MAX[i] <- max(analyte_values, na.rm = TRUE)
+  # Bound temporary matrix allocation and avoid extracting one data-frame row
+  # at a time. Retain the same statistics and sample order within each row.
+  chunk_size <- 2000L
+  for (chunk in seq_len(ceiling(length(analyte_names) / chunk_size))) {
+    rows <- seq.int((chunk - 1L) * chunk_size + 1L,
+                    min(chunk * chunk_size, length(analyte_names)))
+    omics_chunk <- as.matrix(omics_numeric[rows, , drop = FALSE])
 
-    if (i %% progress_every == 0L || i == length(analyte_names)) {
-      .log_111(
-        verbose,
-        paste0(progress_label, ": ", i, "/", length(analyte_names), " analytes")
-      )
+    for (j in seq_along(rows)) {
+      i <- rows[j]
+      analyte_values <- as.numeric(omics_chunk[j, ])
+
+      n_nonmissing[i] <- sum(!is.na(analyte_values))
+      means[i] <- mean(analyte_values, na.rm = TRUE)
+      medians[i] <- median(analyte_values, na.rm = TRUE)
+      sds[i] <- sd(analyte_values, na.rm = TRUE)
+      minima[i] <- min(analyte_values, na.rm = TRUE)
+      maxima[i] <- max(analyte_values, na.rm = TRUE)
+
+      if (i %% progress_every == 0L || i == length(analyte_names)) {
+        .log_111(
+          verbose,
+          paste0(progress_label, ": ", i, "/", length(analyte_names), " analytes")
+        )
+      }
     }
   }
-  
+
+  report$N_NONMISSING <- n_nonmissing
+  report$MEAN <- means
+  report$MEDIAN <- medians
+  report$SD <- sds
+  report$MIN <- minima
+  report$MAX <- maxima
+
   return(report)
 }
 
@@ -374,6 +399,15 @@
 
   # T-test per analyte
   analyte_names <- omics_df$ANALYTE_NAME
+  kept_rows <- integer(length(analyte_names))
+  mean_differences <- numeric(length(analyte_names))
+  cohens_ds <- numeric(length(analyte_names))
+  standard_errors <- numeric(length(analyte_names))
+  p_values <- numeric(length(analyte_names))
+  n_results <- 0L
+  # Named identifier vectors have incremental row-name collision behavior in
+  # rbind(). Preserve that uncommon case; ordinary identifiers use the buffers.
+  preserve_row_names <- !is.null(names(analyte_names))
   .log_111(
     verbose,
     paste0("reports randomization: 0/", length(analyte_names), " analytes (serial)")
@@ -420,15 +454,23 @@
       # Welch's t-test
       tt <- t.test(values_treatment, values_control, var.equal = FALSE)
 
-      # Add to results
-      results <- rbind(results, data.frame(
-        ANALYTE_NAME = analyte_names[i],
-        MEAN_DIFFERENCE = mean_diff,
-        COHENS_D = cohens_d,
-        SE = se,
-        P_VALUE = tt$p.value,
-        stringsAsFactors = FALSE
-      ))
+      if (preserve_row_names) {
+        results <- rbind(results, data.frame(
+          ANALYTE_NAME = analyte_names[i],
+          MEAN_DIFFERENCE = mean_diff,
+          COHENS_D = cohens_d,
+          SE = se,
+          P_VALUE = tt$p.value,
+          stringsAsFactors = FALSE
+        ))
+      } else {
+        n_results <- n_results + 1L
+        kept_rows[n_results] <- i
+        mean_differences[n_results] <- mean_diff
+        cohens_ds[n_results] <- cohens_d
+        standard_errors[n_results] <- se
+        p_values[n_results] <- tt$p.value
+      }
 
     }, error = function(e) {
       warning("Error processing analyte '", analyte_names[i], "': ", e$message)
@@ -440,6 +482,18 @@
         paste0("reports randomization: ", i, "/", length(analyte_names), " analytes")
       )
     }
+  }
+
+  if (!preserve_row_names && n_results > 0L) {
+    rows <- seq_len(n_results)
+    results <- data.frame(
+      ANALYTE_NAME = analyte_names[kept_rows[rows]],
+      MEAN_DIFFERENCE = mean_differences[rows],
+      COHENS_D = cohens_ds[rows],
+      SE = standard_errors[rows],
+      P_VALUE = p_values[rows],
+      stringsAsFactors = FALSE
+    )
   }
 
   # Apply multiple testing correction (global across all analytes)
