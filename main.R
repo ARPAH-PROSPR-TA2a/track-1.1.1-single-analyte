@@ -69,6 +69,7 @@ source(file.path(.track111_root, "treatment_helpers.R"), local = TRUE)
 source(file.path(.track111_root, "followup_helpers.R"), local = TRUE)
 source(file.path(.track111_root, "validation_helpers.R"), local = TRUE)
 source(file.path(.track111_root, "reporting_helpers.R"), local = TRUE)
+source(file.path(.track111_root, "checkpoint_helpers.R"), local = TRUE)
 source(file.path(.track111_root, "analysis_helpers.R"), local = TRUE)
 
 FAST_omics_WAS <- function(pheno,
@@ -83,6 +84,11 @@ FAST_omics_WAS <- function(pheno,
                            fu_labels = NULL) {
 
   analysis_started <- proc.time()[["elapsed"]]
+
+  # Share one legacy-checkpoint notice across responses and strata in this call.
+  checkpoint_state <- new.env(parent = emptyenv())
+  checkpoint_state$directory <- checkpoint_dir
+  checkpoint_state$notified <- FALSE
 
   # Auto-detect cores if not specified, leaving one free for the OS.
   # Note: detectCores() may overcount in HPC/container environments — set
@@ -153,11 +159,13 @@ FAST_omics_WAS <- function(pheno,
   analysis_change <- .run_stratified_analysis(pheno_list, omics_list, omics_type,
                                               additional_covariates, "change", filtered_probes,
                                               checkpoint_dir, checkpoint_batch_size,
-                                              verbose = verbose)
+                                              verbose = verbose,
+                                              checkpoint_state = checkpoint_state)
   analysis_level  <- .run_stratified_analysis(pheno_list, omics_list, omics_type,
                                               additional_covariates, "level", filtered_probes,
                                               checkpoint_dir, checkpoint_batch_size,
-                                              verbose = verbose)
+                                              verbose = verbose,
+                                              checkpoint_state = checkpoint_state)
 
   .log_111(
     verbose,

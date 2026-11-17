@@ -294,7 +294,7 @@ For large analyses (e.g. 750k+ DNAm probes), runs can take many hours.
 Passing `checkpoint_dir` enables fault-tolerant execution: analytes are
 processed in batches, and each completed batch is saved atomically to disk.
 If the run is interrupted, re-running with the same `checkpoint_dir` skips
-already-completed batches and continues from where it left off.
+compatible completed batches and continues from where it left off.
 
 ``` r
 # First run — saves progress to checkpoints/
@@ -326,11 +326,30 @@ checkpoints/
   ...
 ```
 
+Each checkpoint is checked as it loads. Compatible batches must contain the
+expected analytes, treatment contrasts, and follow-up codes, including explicit
+rows for unavailable estimates. Compatibility is determined from the stored
+contents.
+
+FAST recognizes both older checkpoint layouts: per-analyte result lists and
+batch tables saved before multi-arm support. It automatically recomputes those
+batches from the current inputs and replaces each old file after successfully
+saving its replacement. Compatible batches in the same directory are reused.
+An older-format notice identifies the directory once per run, even with
+`verbose = FALSE`. With `verbose = TRUE`, progress also reports how many batches
+were reused, newly computed, or rebuilt from older formats.
+
+Unreadable files, unrecognized contents, or current-format batches with missing,
+duplicate, or unexpected analyte/contrast/follow-up rows stop the run with the
+affected file path and guidance to use a fresh `checkpoint_dir`. The rejected
+file is preserved. For example, set `checkpoint_dir = "checkpoints_fresh"` to a
+new, unused directory; FAST creates it automatically.
+
 Resume with the same input data, model settings, and batch layout. Use a fresh
-checkpoint directory when any of these change or when upgrading across this
-result-schema change. You can change `n_cores` or display labels
-in `treatment_labels` or `fu_labels` on resume; labels are applied after the
-batches are assembled and do not require refitting.
+checkpoint directory when these change. The checks do not compare underlying
+data values or covariate settings. You can change `n_cores` or display labels in
+`treatment_labels` or `fu_labels` on resume; labels are applied after the batches
+are assembled and do not require refitting.
 
 ## Data Format Requirements
 

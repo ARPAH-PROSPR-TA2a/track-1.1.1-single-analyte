@@ -83,7 +83,8 @@
 
 .perform_lm_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL, response_type = c("change", "level"),
                                  checkpoint_dir = NULL, checkpoint_batch_size = 2000L,
-                                 verbose = FALSE, progress_label = response_type) {
+                                 verbose = FALSE, progress_label = response_type,
+                                 checkpoint_state = NULL) {
 
     # Linear regression for single follow-up timepoint only
     # Extracts ALL fixed effect coefficients (treatment, covariates)
@@ -147,7 +148,9 @@
     } else {
       character(0)
     }
-    n_cached <- sum(file.exists(checkpoint_files))
+    n_existing <- sum(file.exists(checkpoint_files))
+    n_reused <- 0L
+    n_rebuilt <- 0L
     new_failures <- 0L
     reported_worker_pids <- FALSE
 
@@ -155,25 +158,26 @@
       verbose,
       paste0(
         progress_label, ": ", length(analyte_names), " analytes, ",
-        length(batches), " batches (", n_cached, " cached, ",
-        length(batches) - n_cached, " pending)"
+        length(batches), " batches (", n_existing,
+        " checkpoint files found; contents checked on load)"
       )
     )
-    if (n_cached == length(batches)) {
-      .log_111(verbose, paste0(progress_label, ": all batches cached; no workers launched"))
-    }
-
     for (b in seq_along(batches)) {
       batch_started <- proc.time()[["elapsed"]]
       batch <- batches[[b]]
       batch_file <- if (!is.null(checkpoint_dir)) file.path(checkpoint_dir, paste0("batch_", b, ".rds")) else NULL
 
-      if (!is.null(batch_file) && file.exists(batch_file)) {
-        batch_payload <- readRDS(batch_file)
-        coefficient_batches[[b]] <- batch_payload$coefficients
-        treatment_batches[[b]] <- batch_payload$treatment_effects
+      batch_existed <- !is.null(batch_file) && file.exists(batch_file)
+      batch_payload <- .read_analysis_checkpoint(
+        batch_file, analyte_names[batch], fu_level, arm_levels, checkpoint_state
+      )
+      if (!is.null(batch_payload)) {
+        coefficient_batches[b] <- list(batch_payload$coefficients)
+        treatment_batches[b] <- list(batch_payload$treatment_effects)
+        n_reused <- n_reused + 1L
         next
       }
+      if (batch_existed) n_rebuilt <- n_rebuilt + 1L
 
       batch_items <- lapply(batch, function(i) list(
         analyte_name = analyte_names[i],
@@ -281,12 +285,11 @@
       batch_payload <- .combine_analysis_results(chunk_results)
 
       if (!is.null(batch_file)) {
-        saveRDS(batch_payload, paste0(batch_file, ".tmp"))
-        file.rename(paste0(batch_file, ".tmp"), batch_file)
+        .save_analysis_checkpoint(batch_payload, batch_file)
       }
 
-      coefficient_batches[[b]] <- batch_payload$coefficients
-      treatment_batches[[b]] <- batch_payload$treatment_effects
+      coefficient_batches[b] <- list(batch_payload$coefficients)
+      treatment_batches[b] <- list(batch_payload$treatment_effects)
 
       .log_111(
         verbose,
@@ -301,6 +304,14 @@
 
       rm(batch_items, worker_chunks, chunk_results, batch_payload)
       invisible(gc())
+    }
+
+    .log_111(verbose, sprintf(
+      "%s: %d batches reused, %d newly computed, %d rebuilt from older formats",
+      progress_label, n_reused, length(batches) - n_reused - n_rebuilt, n_rebuilt
+    ))
+    if (n_reused > 0L && n_reused == length(batches)) {
+      .log_111(verbose, paste0(progress_label, ": all batches reused; no workers launched"))
     }
 
     if (new_failures > 0L) {
@@ -326,7 +337,8 @@
 
 .perform_lme4_analysis <- function(pheno_df, omics_df, pheno_baseline, omics_baseline, additional_covariates = NULL, response_type = c("change", "level"),
                                    checkpoint_dir = NULL, checkpoint_batch_size = 2000L,
-                                   verbose = FALSE, progress_label = response_type) {
+                                   verbose = FALSE, progress_label = response_type,
+                                   checkpoint_state = NULL) {
 
     require(lme4)
     require(lmerTest)
@@ -382,7 +394,9 @@
     } else {
       character(0)
     }
-    n_cached <- sum(file.exists(checkpoint_files))
+    n_existing <- sum(file.exists(checkpoint_files))
+    n_reused <- 0L
+    n_rebuilt <- 0L
     new_failures <- 0L
     reported_worker_pids <- FALSE
 
@@ -390,25 +404,26 @@
       verbose,
       paste0(
         progress_label, ": ", length(analyte_names), " analytes, ",
-        length(batches), " batches (", n_cached, " cached, ",
-        length(batches) - n_cached, " pending)"
+        length(batches), " batches (", n_existing,
+        " checkpoint files found; contents checked on load)"
       )
     )
-    if (n_cached == length(batches)) {
-      .log_111(verbose, paste0(progress_label, ": all batches cached; no workers launched"))
-    }
-
     for (b in seq_along(batches)) {
       batch_started <- proc.time()[["elapsed"]]
       batch <- batches[[b]]
       batch_file <- if (!is.null(checkpoint_dir)) file.path(checkpoint_dir, paste0("batch_", b, ".rds")) else NULL
 
-      if (!is.null(batch_file) && file.exists(batch_file)) {
-        batch_payload <- readRDS(batch_file)
-        coefficient_batches[[b]] <- batch_payload$coefficients
-        treatment_batches[[b]] <- batch_payload$treatment_effects
+      batch_existed <- !is.null(batch_file) && file.exists(batch_file)
+      batch_payload <- .read_analysis_checkpoint(
+        batch_file, analyte_names[batch], fu_levels, arm_levels, checkpoint_state
+      )
+      if (!is.null(batch_payload)) {
+        coefficient_batches[b] <- list(batch_payload$coefficients)
+        treatment_batches[b] <- list(batch_payload$treatment_effects)
+        n_reused <- n_reused + 1L
         next
       }
+      if (batch_existed) n_rebuilt <- n_rebuilt + 1L
 
       batch_items <- lapply(batch, function(i) list(
         analyte_name = analyte_names[i],
@@ -517,12 +532,11 @@
       batch_payload <- .combine_analysis_results(chunk_results)
 
       if (!is.null(batch_file)) {
-        saveRDS(batch_payload, paste0(batch_file, ".tmp"))
-        file.rename(paste0(batch_file, ".tmp"), batch_file)
+        .save_analysis_checkpoint(batch_payload, batch_file)
       }
 
-      coefficient_batches[[b]] <- batch_payload$coefficients
-      treatment_batches[[b]] <- batch_payload$treatment_effects
+      coefficient_batches[b] <- list(batch_payload$coefficients)
+      treatment_batches[b] <- list(batch_payload$treatment_effects)
 
       .log_111(
         verbose,
@@ -537,6 +551,14 @@
 
       rm(batch_items, worker_chunks, chunk_results, batch_payload)
       invisible(gc())
+    }
+
+    .log_111(verbose, sprintf(
+      "%s: %d batches reused, %d newly computed, %d rebuilt from older formats",
+      progress_label, n_reused, length(batches) - n_reused - n_rebuilt, n_rebuilt
+    ))
+    if (n_reused > 0L && n_reused == length(batches)) {
+      .log_111(verbose, paste0(progress_label, ": all batches reused; no workers launched"))
     }
 
     if (new_failures > 0L) {
@@ -562,7 +584,8 @@
 
 .perform_analysis <- function(pheno_df, omics_df, omics_type, mixed_effects, additional_covariates = NULL, response_type = c("change", "level"),
                               checkpoint_dir = NULL, checkpoint_batch_size = 2000L,
-                              verbose = FALSE, progress_label = response_type) {
+                              verbose = FALSE, progress_label = response_type,
+                              checkpoint_state = NULL) {
 
   pheno_baseline <- pheno_df[pheno_df$FU == 0, ]
   baseline_sample_ids <- pheno_baseline$SAMPLE_ID
@@ -583,7 +606,8 @@
       checkpoint_dir,
       checkpoint_batch_size,
       verbose = verbose,
-      progress_label = progress_label
+      progress_label = progress_label,
+      checkpoint_state = checkpoint_state
     )
   } else {
     results <- .perform_lme4_analysis(
@@ -596,7 +620,8 @@
       checkpoint_dir,
       checkpoint_batch_size,
       verbose = verbose,
-      progress_label = progress_label
+      progress_label = progress_label,
+      checkpoint_state = checkpoint_state
     )
   }
 
@@ -680,7 +705,7 @@
                                      additional_covariates, response_type = c("change", "level"),
                                      filtered_probes = NULL,
                                      checkpoint_dir = NULL, checkpoint_batch_size = 2000L,
-                                     verbose = FALSE) {
+                                     verbose = FALSE, checkpoint_state = NULL) {
 
   response_type <- match.arg(response_type)
 
@@ -706,7 +731,8 @@
       stratum_checkpoint_dir,
       checkpoint_batch_size,
       verbose = verbose,
-      progress_label = progress_label
+      progress_label = progress_label,
+      checkpoint_state = checkpoint_state
     )
 
     outputs[[dataset]] <- list(
