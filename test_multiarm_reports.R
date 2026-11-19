@@ -476,6 +476,104 @@ conflicting_label$all$treatment_effects$TREATMENT[1] <- "other arm"
 expect_error(plot_volcano(conflicting_label, treatment = "Arm A"), "exactly one TREATMENT")
 
 local({
+  # Repeated IDs remain separate plotted rows: retain their own inference and
+  # membership within each explicit contrast/FU, without renaming or collapsing.
+  repeated <- effects[rep(seq_len(nrow(effects)), each = 3L), ]
+  repeated$EFFECT_SIZE <- rep(c(-2, .5, 3, -1, 4, 6), 2L)
+  repeated$P_VALUE <- rep(c(.001, .2, .01, .04, NA_real_, .002), 2L)
+  repeated$BH_P_VALUE <- rep(c(.002, .4, .08, .02, NA_real_, .01), 2L)
+  repeated$BH_P_VALUE_FILTERED <- rep(c(.2, .03, .001, .04, NA_real_, .01), 2L)
+  repeated$IN_FILTERED_SET <- rep(c(TRUE, FALSE, TRUE, TRUE, FALSE, TRUE), 2L)
+  repeated$STATUS[c(6L, 12L)] <- "not_estimable"
+  later <- repeated
+  later$FU <- 2L
+  later$EFFECT_SIZE <- later$EFFECT_SIZE + .25
+  later$P_VALUE <- later$P_VALUE / 2
+  pages <- list(all = list(treatment_effects = rbind(repeated, later)),
+                male = list(treatment_effects = later), female = NULL)
+  before <- serialize(pages, NULL)
+
+  expected_rows <- function(stratum, fu, treatment, probe_set) {
+    te <- pages[[stratum]]$treatment_effects
+    keep <- te$FU == fu & te$TREATMENT == treatment & te$STATUS == "ok" &
+      is.finite(te$P_VALUE) & is.finite(te$EFFECT_SIZE)
+    if (probe_set == "filtered") keep <- keep & te$IN_FILTERED_SET
+    te[keep, , drop = FALSE]
+  }
+  # Isolate instrumentation from the global plot functions and call the actual
+  # qq renderer, so these checks also exercise real PDF creation and device cleanup.
+  plot_env <- new.env(parent = environment(plot_qq))
+  draw_qq <- plot_qq
+  environment(draw_qq) <- plot_env
+  render_all <- generate_all_plots
+  environment(render_all) <- plot_env
+  calls <- character()
+  qq_input <- NULL
+  plot_env$qq <- function(pvector, ...) {
+    qq_input <<- pvector
+    qqman::qq(pvector, ...)
+  }
+  plot_env$plot_qq <- function(results, stratum, fu, probe_set, treatment, ...) {
+    calls <<- c(calls, paste("qq", stratum, fu, treatment, probe_set, sep = "/"))
+    qq_input <<- NULL
+    draw_qq(results, stratum = stratum, fu = fu, probe_set = probe_set,
+            treatment = treatment, ...)
+    expected <- expected_rows(stratum, fu, treatment, probe_set)
+    stopifnot(anyDuplicated(expected$ANALYTE_NAME) > 0L,
+              identical(qq_input, expected$P_VALUE))
+  }
+  plot_env$plot_volcano <- function(results, stratum, fu, probe_set, treatment, ...) {
+    calls <<- c(calls, paste("volcano", stratum, fu, treatment, probe_set, sep = "/"))
+    plotted <- plot_volcano(results, stratum = stratum, fu = fu, probe_set = probe_set,
+                            treatment = treatment, ...)
+    expected <- expected_rows(stratum, fu, treatment, probe_set)
+    actual <- plotted$data[!is.na(plotted$data$ANALYTE_NAME), , drop = FALSE]
+    bh <- expected[[if (probe_set == "filtered") "BH_P_VALUE_FILTERED" else "BH_P_VALUE"]]
+    direction <- ifelse(!is.na(bh) & bh < .05,
+                        ifelse(expected$EFFECT_SIZE > 0, "Up", "Down"), "Not significant")
+    stopifnot(identical(actual[, names(expected), drop = FALSE], expected),
+              identical(actual$neg_log_p, -log10(expected$P_VALUE)),
+              identical(as.character(actual$direction), direction))
+    plotted
+  }
+  directory <- tempfile("multiarm-duplicate-plots-")
+  on.exit(unlink(directory, recursive = TRUE), add = TRUE)
+  device_before <- dev.cur()
+  render_all(pages, figures_dir = directory)
+  cells <- c("all/1/Arm A", "all/1/Arm B", "all/2/Arm A", "all/2/Arm B",
+             "male/2/Arm A", "male/2/Arm B")
+  expected_calls <- unlist(lapply(c("full", "filtered"), function(probe_set) {
+    unlist(lapply(c("qq", "volcano"), function(kind) paste(kind, cells, probe_set, sep = "/")))
+  }), use.names = FALSE)
+  pdfs <- file.path(directory, c("qq_full.pdf", "volcano_full.pdf", "qq_filtered.pdf", "volcano_filtered.pdf"))
+  stopifnot(identical(calls, expected_calls), all(file.info(pdfs)$size > 0L),
+            identical(dev.cur(), device_before), identical(serialize(pages, NULL), before))
+
+  # Tolerance of repeated IDs does not weaken explicit contrast/label validation
+  # or permit ambiguous repeated rows to be guessed as legacy binary results.
+  for (invalid in c("", NA_character_)) {
+    malformed <- pages
+    malformed$all$treatment_effects$CONTRAST[1L] <- invalid
+    expect_error(plot_qq(malformed, treatment = "Arm A"), "Invalid.*contrast")
+    expect_error(plot_volcano(malformed, treatment = "Arm A"), "Invalid.*contrast")
+  }
+  malformed <- pages
+  malformed$all$treatment_effects$REFERENCE[1L] <- "another reference"
+  expect_error(plot_volcano(malformed, treatment = "Arm A"), "exactly one REFERENCE")
+  malformed <- pages
+  malformed$all$treatment_effects$TREATMENT <- "Arm A"
+  expect_error(plot_volcano(malformed, treatment = "Arm A"), "exactly one CONTRAST")
+  malformed <- pages
+  malformed$all$treatment_effects$REFERENCE <- NULL
+  expect_error(plot_volcano(malformed, treatment = "Arm A"), "must contain.*REFERENCE")
+  ambiguous <- pages
+  ambiguous$all$treatment_effects <- repeated[1:3, setdiff(names(repeated),
+                                                        c("CONTRAST", "TREATMENT", "REFERENCE"))]
+  expect_error(plot_qq(ambiguous), "Missing CONTRAST")
+  expect_error(plot_volcano(ambiguous), "Missing CONTRAST")
+})
+
+local({
   # Explicit membership wins over both missing and misleading filtered inference.
   members <- effects
   members$IN_FILTERED_SET <- rep(c(TRUE, FALSE), 2L)

@@ -486,6 +486,10 @@ For a direct `plot_qq()` or `plot_volcano()` call with multiple treatments,
 supply your label, for example `treatment = "Diet"`. With one treatment it is
 selected automatically. `generate_all_plots()` includes all treatments.
 
+When results include `CONTRAST`, repeated `ANALYTE_NAME` values are plotted
+as separate result rows with their original names and statistics. Legacy
+results without `CONTRAST` still require unique analyte/follow-up rows.
+
 When results contain `FU_LABEL`, plot titles display the supplied visit label.
 Direct plot calls still select visits by numeric code, e.g. `fu = 2`; older
 results without labels retain their existing titles.

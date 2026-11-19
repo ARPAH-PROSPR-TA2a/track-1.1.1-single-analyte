@@ -44,10 +44,11 @@ library(ggplot2)
     treatment_effects$TREATMENT <- "Treatment"
     treatment_effects$REFERENCE <- "Control"
   }
+  # Plot each result row independently, even when analyte names repeat.
+  # Contrast metadata must still identify an unambiguous comparison.
   contrasts <- unique(as.character(treatment_effects$CONTRAST))
-  if (anyNA(contrasts) || any(!nzchar(contrasts)) ||
-      anyDuplicated(treatment_effects[, c("ANALYTE_NAME", "FU", "CONTRAST"), drop = FALSE])) {
-    stop("Invalid or duplicate treatment contrast keys")
+  if (anyNA(contrasts) || any(!nzchar(contrasts))) {
+    stop("Invalid treatment contrast keys")
   }
   if (!all(c("TREATMENT", "REFERENCE") %in% names(treatment_effects))) {
     stop("Contrast results must contain TREATMENT and REFERENCE labels")
